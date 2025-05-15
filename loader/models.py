@@ -25,7 +25,7 @@ class DownloadQuality(Enum):
 @dataclass
 class DownloadConfig:
     download_directory: str = "/mnt/m/Library/Youtube"
-    max_concurrent_downloads: int = 3
+    max_concurrent_downloads: int = 1
     default_quality: DownloadQuality = DownloadQuality.BEST
     retry_count: int = 3
     auto_retry_failed: bool = True

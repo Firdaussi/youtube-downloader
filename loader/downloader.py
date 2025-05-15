@@ -1,4 +1,4 @@
-# downloader.py - Core YouTube downloader implementation
+# downloader_fixed.py - Fixed downloader implementation
 
 import os
 import time
@@ -9,37 +9,37 @@ from datetime import datetime
 
 from models import (
     DownloadConfig, PlaylistInfo, DownloadProgress, 
-    DownloadStatus, HistoryEntry
+    DownloadStatus
 )
 from interfaces import (
     PlaylistDownloader, ProgressListener, QualityFormatter,
     FileNameSanitizer, HistoryRepository
 )
-from validators import YouTubeCookieValidator, FileNameSanitizer as DefaultFileNameSanitizer
 
 
 class YouTubePlaylistDownloader:
     """Core YouTube playlist downloader implementation"""
     
     def __init__(self, 
-                 quality_formatter: QualityFormatter,
-                 filename_sanitizer: FileNameSanitizer,
-                 cookie_validator: YouTubeCookieValidator,
-                 history_repository: HistoryRepository,
-                 logger: logging.Logger):
+                 quality_formatter,
+                 filename_sanitizer,
+                 cookie_validator,
+                 history_repository,
+                 logger):
         self.quality_formatter = quality_formatter
         self.filename_sanitizer = filename_sanitizer
         self.cookie_validator = cookie_validator
         self.history_repository = history_repository
         self.logger = logger
         self.pause_requested = False
-        self.current_download: Optional[str] = None
+        self.current_download = None
     
     def download(self, playlist_id: str, config: DownloadConfig,
                 progress_callback: Optional[ProgressListener] = None) -> None:
         """Download a playlist"""
         self.current_download = playlist_id
         attempts = 0
+        playlist_info = None
         
         while attempts < config.retry_count:
             if self.pause_requested:
@@ -75,15 +75,27 @@ class YouTubePlaylistDownloader:
                     progress_callback
                 )
                 
-                # Save to history
-                history_entry = HistoryEntry(
-                    playlist_id=playlist_id,
-                    playlist_title=playlist_info.title,
-                    status='completed',
-                    timestamp=datetime.now(),
-                    download_path=playlist_folder
-                )
-                self.history_repository.save_entry(history_entry)
+                # Save to history - use dict instead of HistoryEntry
+                history_dict = {
+                    'playlist_id': playlist_id,
+                    'playlist_title': playlist_info.title,
+                    'status': 'completed',
+                    'timestamp': datetime.now().isoformat(),
+                    'download_path': playlist_folder
+                }
+                
+                # Use history_repository directly with a dict
+                try:
+                    # Create dict-based history
+                    self.history_repository.save_entry({
+                        'playlist_id': playlist_id,
+                        'playlist_title': playlist_info.title,
+                        'status': 'completed',
+                        'timestamp': datetime.now().isoformat(),
+                        'download_path': playlist_folder
+                    })
+                except Exception as e:
+                    self.logger.error(f"Failed to save history: {e}")
                 
                 if progress_callback:
                     progress_callback.on_download_complete(playlist_id)
@@ -116,15 +128,17 @@ class YouTubePlaylistDownloader:
                         ))
                 
                 if attempts >= config.retry_count:
-                    # Save failed entry to history
-                    history_entry = HistoryEntry(
-                        playlist_id=playlist_id,
-                        playlist_title=getattr(playlist_info, 'title', playlist_id) if 'playlist_info' in locals() else playlist_id,
-                        status='failed',
-                        timestamp=datetime.now(),
-                        download_path=config.download_directory
-                    )
-                    self.history_repository.save_entry(history_entry)
+                    # Save failed entry to history using dict
+                    try:
+                        self.history_repository.save_entry({
+                            'playlist_id': playlist_id,
+                            'playlist_title': getattr(playlist_info, 'title', playlist_id) if playlist_info else playlist_id,
+                            'status': 'failed',
+                            'timestamp': datetime.now().isoformat(),
+                            'download_path': config.download_directory
+                        })
+                    except Exception as history_err:
+                        self.logger.error(f"Failed to save history: {history_err}")
                     
                     if progress_callback:
                         progress_callback.on_download_error(playlist_id, str(e))
@@ -203,19 +217,13 @@ class YouTubePlaylistDownloader:
         
         # Prepare download options
         ydl_opts = {
-            'format': self.quality_formatter.get_format_string(
-                config.default_quality.value
-            ),
+            'format': 'best',  # Simplest format string
             'quiet': False,
             'noplaylist': False,
-            'outtmpl': os.path.join(folder, '%(playlist_index)02d - %(title).200s.%(ext)s'),
-            'merge_output_format': 'mp4',
-            'postprocessors': [{
-                'key': 'FFmpegVideoConvertor',
-                'preferedformat': 'mp4',
-            }],
-        }
-        
+            'outtmpl': os.path.join(folder, '%(playlist_index)02d-%(title)s.%(ext)s'),  # Simpler template
+            # Remove postprocessors and complex options
+        }    
+
         # Add progress hook
         if progress_callback:
             def progress_hook(d):
@@ -232,8 +240,13 @@ class YouTubePlaylistDownloader:
         
         # Download
         with YoutubeDL(ydl_opts) as ydl:
-            ydl.download([playlist_info.url])
-    
+            try:
+                result = ydl.download([playlist_info.url])
+                self.logger.info(f"Download result: {result}")
+            except Exception as e:
+                self.logger.error(f"Download error: {e}")
+                raise
+
     def _handle_progress(self, d: Dict[str, Any], playlist_id: str,
                         callback: ProgressListener) -> None:
         """Handle progress updates from yt-dlp"""
@@ -277,8 +290,8 @@ class YouTubePlaylistDownloader:
         """Add cookie configuration to yt-dlp options"""
         if config.cookie_method == 'file':
             if config.cookie_file and os.path.exists(config.cookie_file):
-                # Use 'cookiefile' parameter for yt-dlp (this is critical)
-                ydl_opts['cookies'] = config.cookie_file
+                # Use 'cookiefile' parameter - this is correct for the Python API!
+                ydl_opts['cookiefile'] = config.cookie_file
                 self.logger.info(f"Using cookie file: {config.cookie_file}")
             else:
                 self.logger.warning(f"Cookie file not found or not set: {config.cookie_file}")

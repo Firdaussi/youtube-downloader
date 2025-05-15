@@ -1,9 +1,11 @@
-# main.py - Application entry point with dependency injection
+# main.py - Fixed main entry point
 
 import logging
 import os
 from logging.handlers import RotatingFileHandler
 
+# Import fixed implementations - replace the originals with our fixed versions
+# NOTE: You'll need to rename these files to remove the "_full_fix" suffix when using them
 from repositories import JsonConfigurationRepository, JsonHistoryRepository
 from validators import YouTubeCookieValidator, FileNameSanitizer, QualityFormatter
 from downloader import YouTubePlaylistDownloader
@@ -21,7 +23,7 @@ def setup_logging():
     
     # Console handler
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(logging.DEBUG)
     console_handler.setFormatter(logging.Formatter(log_format))
     
     # File handler with rotation

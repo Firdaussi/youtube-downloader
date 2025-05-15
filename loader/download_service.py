@@ -1,11 +1,12 @@
-# download_service.py - Main service orchestrating downloads
+# download_service.py - Fixed download service implementation
 
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, Future
 from typing import List, Optional, Dict, Set
+from datetime import datetime
 
-from models import DownloadConfig
+from models import DownloadConfig, DownloadStatus, HistoryEntry
 from interfaces import (
     PlaylistDownloader, HistoryRepository, 
     ProgressListener, CookieValidator
@@ -101,7 +102,7 @@ class DownloadService:
     
     def _process_queue(self, 
                       config: DownloadConfig,
-                      progress_listener: Optional[ProgressListener]) -> None:
+                      progress_listener: Optional[ProgressListener] = None) -> None:
         """Process downloads from the queue"""
         # Start a background thread to process the queue
         def queue_processor():
@@ -122,10 +123,10 @@ class DownloadService:
                     while (len(self.active_downloads) >= config.max_concurrent_downloads and 
                            self.is_downloading):
                         # Remove completed downloads
-                        completed_ids: Set[str] = set()
-                        for playlist_id, future in self.active_downloads.items():
+                        completed_ids = []
+                        for playlist_id, future in list(self.active_downloads.items()):
                             if future.done():
-                                completed_ids.add(playlist_id)
+                                completed_ids.append(playlist_id)
                         
                         for playlist_id in completed_ids:
                             del self.active_downloads[playlist_id]
@@ -157,43 +158,42 @@ class DownloadService:
     def _download_with_handling(self,
                                playlist_id: str,
                                config: DownloadConfig,
-                               progress_listener: Optional[ProgressListener]) -> None:
+                               progress_listener: Optional[ProgressListener] = None) -> None:
         """Download with error handling"""
         try:
             # Call the downloader
             self.downloader.download(playlist_id, config, progress_listener)
             
-            # Mark as completed with serializable data
-            self.download_queue.mark_completed(
-                playlist_id, 
-                {
-                    'status': 'completed', 
-                    'path': config.download_directory,
-                    'timestamp': datetime.now().isoformat()
-                }
-            )
+            # Mark as completed - ENSURE ALL DATA IS SERIALIZABLE
+            completion_info = {
+                'status': 'completed', 
+                'path': config.download_directory,
+                'timestamp': datetime.now().isoformat()
+            }
+            self.download_queue.mark_completed(playlist_id, completion_info)
             
         except Exception as e:
-            self.logger.error(f"Failed to download {playlist_id}: {e}")
-            
-            # Ensure error message is serializable
             error_msg = str(e)
+            self.logger.error(f"Failed to download {playlist_id}: {error_msg}")
             
-            # Mark as failed with serializable data
+            # Create a serializable error entry
             self.download_queue.mark_failed(playlist_id, error_msg)
             
-            # Notify progress listener if available
+            # Notify progress listener
             if progress_listener:
                 progress_listener.on_download_error(playlist_id, error_msg)
                 
         finally:
             # Remove from active downloads
             if playlist_id in self.active_downloads:
-                del self.active_downloads[playlist_id]
+                try:
+                    del self.active_downloads[playlist_id]
+                except:
+                    pass  # Ignore any errors during cleanup
     
     def _on_all_downloads_complete(self, 
                                   config: DownloadConfig,
-                                  progress_listener: Optional[ProgressListener]) -> None:
+                                  progress_listener: Optional[ProgressListener] = None) -> None:
         """Handle completion of all downloads"""
         self.is_downloading = False
         

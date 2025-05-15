@@ -90,11 +90,12 @@ class QualityFormatter:
     
     def __init__(self):
         self.format_strings = {
-            'best': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            '1080p': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best',
-            '720p': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best',
-            '480p': 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best',
-            'audio_only': 'bestaudio[ext=m4a]/bestaudio'
+            # More flexible format strings that don't require specific codecs
+            'best': 'bestvideo+bestaudio/best',
+            '1080p': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
+            '720p': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
+            '480p': 'bestvideo[height<=480]+bestaudio/best[height<=480]/best',
+            'audio_only': 'bestaudio/best'
         }
     
     def get_format_string(self, quality: str) -> str:

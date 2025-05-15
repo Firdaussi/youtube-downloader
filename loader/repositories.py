@@ -1,8 +1,8 @@
-# repositories.py - Concrete implementations of repository interfaces
+# repositories.py - Fixed repository implementations
 
 import json
 import os
-from typing import List, Optional
+from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 from models import DownloadConfig, HistoryEntry, DownloadQuality
 
@@ -50,62 +50,78 @@ class JsonConfigurationRepository:
 
 
 class JsonHistoryRepository:
-    """JSON file-based history storage"""
+    """JSON file-based history storage with improved serialization"""
     
     def __init__(self, history_file: str = "download_history.json"):
         self.history_file = history_file
     
-    def save_entry(self, entry: HistoryEntry) -> None:
-        """Save a history entry to file"""
-        history = self.load_history()
+    def save_entry(self, entry: Union[HistoryEntry, Dict[str, Any]]) -> None:
+        """Save a history entry to file, handles both HistoryEntry objects and dicts"""
+        history = self.load_history_as_dicts()
         
-        # Convert to dict for JSON serialization
-        entry_dict = {
-            'playlist_id': entry.playlist_id,
-            'playlist_title': entry.playlist_title,
-            'status': entry.status,
-            'timestamp': entry.timestamp.isoformat(),
-            'download_path': entry.download_path
-        }
+        # Convert to dict for JSON serialization if not already a dict
+        if isinstance(entry, HistoryEntry):
+            entry_dict = {
+                'playlist_id': entry.playlist_id,
+                'playlist_title': entry.playlist_title,
+                'status': entry.status,
+                'timestamp': entry.timestamp.isoformat() if hasattr(entry.timestamp, 'isoformat') else entry.timestamp,
+                'download_path': entry.download_path
+            }
+        else:
+            # Already a dict, make sure timestamp is a string
+            entry_dict = dict(entry)  # Make a copy to avoid modifying the original
+            if 'timestamp' in entry_dict and hasattr(entry_dict['timestamp'], 'isoformat'):
+                entry_dict['timestamp'] = entry_dict['timestamp'].isoformat()
         
-        # Remove any existing entries with the same ID and status
-        history = [e for e in history if not (
-            isinstance(e, dict) and 
-            e.get('playlist_id') == entry.playlist_id and 
-            e.get('status') == entry.status
-        )]
+        # Remove any existing entries with the same ID 
+        history = [e for e in history if e.get('playlist_id') != entry_dict.get('playlist_id')]
         
+        # Add the new entry
         history.append(entry_dict)
         
+        # Save to file
         with open(self.history_file, 'w') as f:
             json.dump(history, f, indent=2)
     
     def load_history(self) -> List[HistoryEntry]:
-        """Load all history entries from file"""
+        """Load history entries as HistoryEntry objects"""
+        history_dicts = self.load_history_as_dicts()
+        
+        entries = []
+        for item in history_dicts:
+            try:
+                # Convert timestamp string to datetime
+                if isinstance(item.get('timestamp'), str):
+                    timestamp = datetime.fromisoformat(item['timestamp'])
+                else:
+                    timestamp = datetime.now()  # Fallback
+                
+                entry = HistoryEntry(
+                    playlist_id=item['playlist_id'],
+                    playlist_title=item['playlist_title'],
+                    status=item['status'],
+                    timestamp=timestamp,
+                    download_path=item['download_path']
+                )
+                entries.append(entry)
+            except Exception as e:
+                print(f"Error converting history entry: {e}")
+                # Skip invalid entries
+                continue
+        
+        return entries
+    
+    def load_history_as_dicts(self) -> List[Dict[str, Any]]:
+        """Load raw history entries as dictionaries"""
         if not os.path.exists(self.history_file):
             return []
         
         try:
             with open(self.history_file, 'r') as f:
-                data = json.load(f)
-                
-            entries = []
-            for item in data:
-                # Handle both dict and HistoryEntry objects
-                if isinstance(item, dict):
-                    entry = HistoryEntry(
-                        playlist_id=item['playlist_id'],
-                        playlist_title=item['playlist_title'],
-                        status=item['status'],
-                        timestamp=datetime.fromisoformat(item['timestamp']),
-                        download_path=item['download_path']
-                    )
-                    entries.append(entry)
-                else:
-                    entries.append(item)
-            
-            return entries
-        except Exception:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading history file: {e}")
             return []
     
     def clear_history(self) -> None:
@@ -115,8 +131,7 @@ class JsonHistoryRepository:
     
     def find_by_playlist_id(self, playlist_id: str) -> Optional[HistoryEntry]:
         """Find a history entry by playlist ID"""
-        history = self.load_history()
-        for entry in history:
+        for entry in self.load_history():
             if entry.playlist_id == playlist_id and entry.status == 'completed':
                 return entry
         return None
