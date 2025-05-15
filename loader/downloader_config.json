@@ -1,0 +1,11 @@
+{
+  "download_directory": "/mnt/m/Library/Youtube",
+  "max_concurrent_downloads": 3,
+  "default_quality": "best",
+  "retry_count": 3,
+  "auto_retry_failed": true,
+  "check_duplicates": true,
+  "bandwidth_limit": "0",
+  "cookie_method": "none",
+  "cookie_file": ""
+}
