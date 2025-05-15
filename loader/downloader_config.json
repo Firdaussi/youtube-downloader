@@ -2,7 +2,7 @@
   "download_directory": "/mnt/m/Library/Youtube",
   "max_concurrent_downloads": 1,
   "default_quality": "best",
-  "retry_count": 3,
+  "retry_count": 2,
   "auto_retry_failed": true,
   "check_duplicates": true,
   "bandwidth_limit": "0",

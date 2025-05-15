@@ -1,119 +1,80 @@
-# YouTube Playlist Downloader - SOLID Refactored
+# YouTube Playlist Downloader
 
-This is a refactored version of the YouTube playlist downloader that follows SOLID principles for better maintainability, testability, and extensibility.
+A SOLID-compliant YouTube playlist downloader with environment variable support.
 
-## Architecture Overview
+## Setup
 
-The application is now structured following SOLID principles:
+1. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-### Single Responsibility Principle (SRP)
-Each class has a single, well-defined responsibility:
-- `DownloadQueue`: Manages the download queue
-- `YouTubePlaylistDownloader`: Handles YouTube-specific downloading
-- `DownloadService`: Orchestrates the download process
-- `DownloadPresenter`: Handles UI interactions for downloads
-- `JsonConfigurationRepository`: Manages configuration persistence
-- `JsonHistoryRepository`: Manages history persistence
+2. Create a `.env` file in the project root (or copy and modify the sample):
+   ```bash
+   cp .env.sample .env
+   ```
 
-### Open/Closed Principle (OCP)
-The application is open for extension but closed for modification:
-- New download sources can be added by implementing the `PlaylistDownloader` interface
-- New storage methods can be added by implementing repository interfaces
-- New UI frameworks can be used by implementing new presenters
+3. Edit the `.env` file to configure your environment:
+   ```ini
+   # YouTube Downloader Environment Configuration
+   YOUTUBE_DOWNLOAD_DIR=/path/to/your/downloads
+   YOUTUBE_COOKIE_FILE=/path/to/your/cookies.txt
+   ```
 
-### Liskov Substitution Principle (LSP)
-All implementations can be substituted for their interfaces without breaking functionality.
+## Environment Variables
 
-### Interface Segregation Principle (ISP)
-Interfaces are focused and specific:
-- `ConfigurationRepository`: Only configuration operations
-- `HistoryRepository`: Only history operations
-- `ProgressListener`: Only progress updates
-- `CookieValidator`: Only cookie validation
+The application can be configured using these environment variables:
 
-### Dependency Inversion Principle (DIP)
-High-level modules don't depend on low-level modules:
-- All dependencies are injected through constructors
-- Components depend on abstractions (interfaces), not concretions
+YOUTUBE_DOWNLOAD_DIR     - Download directory (/mnt/m/Library/Youtube)
+YOUTUBE_MAX_CONCURRENT   - Maximum concurrent downloads (3)
+YOUTUBE_DEFAULT_QUALITY  - Default quality: best, 1080p, 720p, 480p, audio_only (best)
+YOUTUBE_COOKIE_METHOD    - Cookie method: none, file, firefox, chrome, etc. (none)
+YOUTUBE_COOKIE_FILE      - Path to cookie file ("")
+YOUTUBE_RETRY_COUNT      - Number of retry attempts (3)
+YOUTUBE_AUTO_RETRY       - Auto-retry failed downloads: true/false (true)
+YOUTUBE_CHECK_DUPLICATES - Check for duplicate downloads: true/false (true)
+YOUTUBE_BANDWIDTH_LIMIT  - Bandwidth limit: 0, 1M, 2M, etc. (0)
+YOUTUBE_LOGS_DIR         - Log directory (logs)
+YOUTUBE_LOG_LEVEL        - Logging level: DEBUG, INFO, WARNING, ERROR (INFO)
 
-## File Structure
+Values in parentheses are the defaults that will be used if the variable is not set.
+To use these variables, either:
 
-```
-models.py              - Domain models and data structures
-interfaces.py          - Abstract interfaces (protocols)
-repositories.py        - Data persistence implementations
-validators.py          - Validation logic
-queue_manager.py       - Download queue management
-downloader.py          - Core YouTube downloader
-download_service.py    - Download orchestration service
-presenters.py          - UI presentation logic
-gui.py                - GUI implementation
-main.py               - Application entry point
-test_example.py       - Example unit tests
-```
+Set them in your .env file, or
+Set them in your system environment before running the application, or
+Prefix them when running the app: YOUTUBE_MAX_CONCURRENT=1 python main.py
 
-## Key Benefits
+## Running the Application
 
-1. **Testability**: Each component can be tested in isolation with mocked dependencies
-2. **Maintainability**: Changes to one component don't affect others
-3. **Extensibility**: New features can be added without modifying existing code
-4. **Flexibility**: Different implementations can be swapped easily
-5. **Clarity**: Each class has a clear, single purpose
-
-## Usage
-
-Run the application:
 ```bash
 python main.py
 ```
 
-Run tests:
-```bash
-python test_example.py
-```
+## Cookie Authentication
 
-## Adding New Features
+For YouTube authentication, you can either:
 
-### Add a new download source:
-1. Implement the `PlaylistDownloader` interface
-2. Update dependency injection in `main.py`
+1. Use browser cookies (set `YOUTUBE_COOKIE_METHOD` to your browser, e.g. `firefox`)
+2. Use a cookie file (set `YOUTUBE_COOKIE_METHOD=file` and `YOUTUBE_COOKIE_FILE=/path/to/cookies.txt`)
 
-### Add a new storage method:
-1. Implement the repository interfaces
-2. Update dependency injection in `main.py`
+To export cookies from your browser:
+1. Install a cookies.txt extension
+2. Log in to YouTube
+3. Export cookies to a file
+4. Set the path in your `.env` file
 
-### Add a new UI:
-1. Create new presenter classes
-2. Create new UI implementation
-3. Wire them together in `main.py`
+## Architecture
 
-## Dependencies
+The application follows SOLID principles:
+- Single Responsibility Principle: Each class has a single responsibility
+- Open/Closed Principle: Easy to extend without modifying existing code
+- Liskov Substitution Principle: Proper use of interfaces
+- Interface Segregation Principle: Focused, specific interfaces
+- Dependency Inversion Principle: Dependencies are injected, not created internally
 
-- tkinter (for GUI)
-- yt-dlp (for YouTube downloading)
-- Standard Python libraries
+## Debugging
 
-## Configuration
-
-Configuration is stored in `downloader_config.json` and includes:
-- Download directory
-- Quality settings
-- Concurrent download limits
-- Cookie settings
-- Retry and duplicate checking options
-
-## Error Handling
-
-Errors are handled at appropriate levels:
-- Download errors are caught and reported through the progress listener
-- Validation errors are reported before operations begin
-- All errors are logged for debugging
-
-## Testing
-
-The modular architecture makes testing straightforward:
-- Mock dependencies for unit tests
-- Test business logic separately from UI
-- Test each component in isolation
-
-See `test_example.py` for testing examples.
+If you experience issues:
+1. Set `YOUTUBE_LOG_LEVEL=DEBUG` in your `.env` file
+2. Check the logs in the `logs` directory
+3. Run the debugging scripts: `python youtube_debug.py` or `python filepath_debug.py`

@@ -1,13 +1,20 @@
-# main.py - Fixed main entry point
+# main_env.py - Main entry point with environment variable support
 
 import logging
 import os
 from logging.handlers import RotatingFileHandler
 
-# Import fixed implementations - replace the originals with our fixed versions
-# NOTE: You'll need to rename these files to remove the "_full_fix" suffix when using them
-from repositories import JsonConfigurationRepository, JsonHistoryRepository
+# Import environment module first to ensure variables are loaded
+from environment import env
+
+# Import repositories
+from repositories import JsonHistoryRepository
+from env_config import EnvironmentConfigRepository
+
+# Import validators and utilities
 from validators import YouTubeCookieValidator, FileNameSanitizer, QualityFormatter
+
+# Import core components
 from downloader import YouTubePlaylistDownloader
 from download_service import DownloadService
 from presenters import DownloadPresenter, HistoryPresenter, SettingsPresenter
@@ -18,26 +25,32 @@ def setup_logging():
     """Configure application logging"""
     log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     
-    # Create logs directory
-    os.makedirs('logs', exist_ok=True)
+    # Create logs directory from environment or fallback
+    logs_dir = env.get("YOUTUBE_LOGS_DIR", "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    
+    # Log level from environment or fallback to INFO
+    log_level_name = env.get("YOUTUBE_LOG_LEVEL", "INFO")
+    log_level = getattr(logging, log_level_name.upper(), logging.INFO)
     
     # Console handler
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.DEBUG)
+    console_handler.setLevel(log_level)
     console_handler.setFormatter(logging.Formatter(log_format))
     
     # File handler with rotation
+    log_file = os.path.join(logs_dir, "youtube_downloader.log")
     file_handler = RotatingFileHandler(
-        'logs/youtube_downloader.log',
+        log_file,
         maxBytes=10*1024*1024,  # 10MB
         backupCount=5
     )
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(log_level)
     file_handler.setFormatter(logging.Formatter(log_format))
     
     # Root logger configuration
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)
+    root_logger.setLevel(log_level)
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
     
@@ -50,8 +63,13 @@ def create_application():
     logger = setup_logging()
     logger.info("Starting YouTube Playlist Downloader")
     
-    # Create repositories
-    config_repository = JsonConfigurationRepository()
+    # Show environment info
+    logger.info(f"Using environment settings")
+    logger.info(f"Download directory: {env.get('YOUTUBE_DOWNLOAD_DIR', 'Not set')}")
+    logger.info(f"Cookie method: {env.get('YOUTUBE_COOKIE_METHOD', 'Not set')}")
+    
+    # Create repositories - use environment config
+    config_repository = EnvironmentConfigRepository()
     history_repository = JsonHistoryRepository()
     
     # Create validators and utilities
