@@ -74,16 +74,50 @@ class FileNameSanitizer:
     """Sanitizes filenames for filesystem safety"""
     
     def sanitize(self, filename: str) -> str:
-        """Remove invalid characters from filename"""
-        # Remove invalid characters
-        sanitized = re.sub(r'[\\/*?:"<>|]', "", filename)
+        """Sanitize a filename (not a path) for filesystem safety"""
+        # Check if this is a path - if so, handle differently
+        if os.path.sep in filename:
+            # This is likely a path, not just a filename
+            # Split path into components and sanitize each filename component
+            # while preserving the path structure
+            path_parts = filename.split(os.path.sep)
+            sanitized_parts = []
+            
+            # Process each part of the path, preserving empty parts for absolute paths
+            for i, part in enumerate(path_parts):
+                # Skip empty parts at the beginning (for absolute paths)
+                if i == 0 and not part and os.path.sep == '/':
+                    sanitized_parts.append('')
+                    continue
+                    
+                # Skip empty parts that might result from consecutive separators
+                if not part:
+                    continue
+                    
+                # Sanitize the part if it's not empty
+                sanitized_part = self._sanitize_filename_component(part)
+                sanitized_parts.append(sanitized_part)
+                
+            # Rejoin the path with appropriate separators
+            return os.path.sep.join(sanitized_parts)
+        else:
+            # This is just a filename, sanitize directly
+            return self._sanitize_filename_component(filename)
+            
+    def _sanitize_filename_component(self, component: str) -> str:
+        """Sanitize a single filename component (not a path)"""
+        # Remove invalid characters, but NOT path separators
+        invalid_chars = r'\\*?:"<>|'  # Note: removed / from the invalid chars list
+        sanitized = re.sub(f'[{re.escape(invalid_chars)}]', "", component)
+        
         # Remove leading/trailing whitespace and dots
         sanitized = sanitized.strip('. ')
+        
         # Limit length
         if len(sanitized) > 200:
             sanitized = sanitized[:200]
+            
         return sanitized
-
 
 class QualityFormatter:
     """Generates yt-dlp format strings for different qualities"""

@@ -1,5 +1,6 @@
-# models.py - Domain models and data structures
+# models.py - Domain models and data structures with generic defaults
 
+import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Dict, Any
@@ -24,15 +25,27 @@ class DownloadQuality(Enum):
 
 @dataclass
 class DownloadConfig:
-    download_directory: str = ""
-    max_concurrent_downloads: int = 1
+    # Core settings
+    download_directory: str = os.path.join(os.path.expanduser("~"), "Downloads", "YouTube")
+    max_concurrent_downloads: int = 3
     default_quality: DownloadQuality = DownloadQuality.BEST
     retry_count: int = 3
     auto_retry_failed: bool = True
     check_duplicates: bool = True
     bandwidth_limit: str = "0"
+    
+    # Authentication settings
     cookie_method: str = "none"
     cookie_file: str = ""
+    
+    # Output settings
+    output_template: str = "%(playlist_index)02d-%(title)s.%(ext)s"
+    create_playlist_folder: bool = True
+    sanitize_filenames: bool = True
+    
+    # Format settings
+    preferred_format: str = "mp4"
+    use_postprocessing: bool = True
 
 
 @dataclass

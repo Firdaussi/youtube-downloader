@@ -113,25 +113,53 @@ class JsonHistoryRepository:
         return entries
     
     def load_history_as_dicts(self) -> List[Dict[str, Any]]:
-        """Load raw history entries as dictionaries"""
+        """Load raw history entries as dictionaries with improved error handling"""
         if not os.path.exists(self.history_file):
+            # Create an empty history file if it doesn't exist
+            with open(self.history_file, 'w') as f:
+                json.dump([], f)
             return []
         
         try:
             with open(self.history_file, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Error loading history file: {e}")
+                content = f.read().strip()
+                # Check if file is empty or just whitespace
+                if not content:
+                    return []
+                
+                return json.loads(content)
+        except json.JSONDecodeError as e:
+            error_msg = f"Error loading history file: {e}"
+            print(error_msg)
+            
+            # Backup corrupted file
+            backup_file = f"{self.history_file}.bak.{int(time.time())}"
+            try:
+                shutil.copy2(self.history_file, backup_file)
+                print(f"Corrupted history file backed up to {backup_file}")
+            except Exception as be:
+                print(f"Failed to backup corrupted history: {be}")
+            
+            # Create a new empty history file
+            with open(self.history_file, 'w') as f:
+                json.dump([], f)
+            
             return []
+        except Exception as e:
+            print(f"Unexpected error loading history file: {e}")
+            return []
+
+    def find_by_playlist_id(self, playlist_id: str) -> Optional[HistoryEntry]:
+        """Find a history entry by playlist ID with error handling"""
+        try:
+            for entry in self.load_history():
+                if entry.playlist_id == playlist_id and entry.status == 'completed':
+                    return entry
+        except Exception as e:
+            print(f"Error searching history: {e}")
+        return None
     
     def clear_history(self) -> None:
         """Clear all history"""
         with open(self.history_file, 'w') as f:
             json.dump([], f)
-    
-    def find_by_playlist_id(self, playlist_id: str) -> Optional[HistoryEntry]:
-        """Find a history entry by playlist ID"""
-        for entry in self.load_history():
-            if entry.playlist_id == playlist_id and entry.status == 'completed':
-                return entry
-        return None
