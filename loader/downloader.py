@@ -5,6 +5,8 @@ import time
 import logging
 from typing import Optional, Dict, Any
 from yt_dlp import YoutubeDL
+import re
+from pathlib import Path
 from datetime import datetime
 
 from models import (
@@ -33,6 +35,39 @@ class YouTubePlaylistDownloader:
         self.logger = logger
         self.pause_requested = False
         self.current_download = None
+    
+    @staticmethod
+    def sanitize_filepath(filepath):
+        """
+        Thoroughly sanitize a file path to ensure it's valid across all platforms.
+        - Replaces invalid characters
+        - Handles path length limitations
+        - Normalizes path separators
+        """
+        # Get directory and filename
+        directory, filename = os.path.split(filepath)
+        
+        # Create Path object to normalize path separators
+        directory_path = Path(directory)
+        
+        # Ensure directory exists
+        os.makedirs(directory_path, exist_ok=True)
+        
+        # Replace invalid characters in filename with underscores
+        # This is more thorough than most sanitization functions
+        filename = re.sub(r'[\\/*?:"<>|]', '_', filename)
+        
+        # Limit filename length (Windows has a 260 character path limitation)
+        max_filename_length = 100  # Conservative limit
+        if len(filename) > max_filename_length:
+            base, ext = os.path.splitext(filename)
+            truncated_base = base[:max_filename_length - len(ext) - 3]  # Leave room for "..." and extension
+            filename = f"{truncated_base}...{ext}"
+        
+        # Recombine directory and sanitized filename
+        sanitized_path = os.path.join(str(directory_path), filename)
+        
+        return sanitized_path
     
     def download(self, playlist_id: str, config: DownloadConfig,
                 progress_callback: Optional[ProgressListener] = None) -> None:
@@ -159,11 +194,15 @@ class YouTubePlaylistDownloader:
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(playlist_url, download=False)
         
+        # Get the raw title from info
+        raw_title = info.get('title', f'Playlist_{playlist_id}')
+        
+        # Only sanitize the title, not any path components
+        sanitized_title = self.filename_sanitizer._sanitize_filename_component(raw_title)
+        
         return PlaylistInfo(
             id=playlist_id,
-            title=self.filename_sanitizer.sanitize(
-                info.get('title', f'Playlist_{playlist_id}')
-            ),
+            title=sanitized_title,
             url=playlist_url,
             total_tracks=len(info.get('entries', [])),
             entries=info.get('entries', [])
@@ -198,7 +237,10 @@ class YouTubePlaylistDownloader:
     
     def _create_playlist_folder(self, base_dir: str, playlist_title: str) -> str:
         """Create folder for playlist"""
-        folder_path = os.path.join(base_dir, playlist_title)
+        # Do NOT sanitize the base_dir as it's a path
+        # Only sanitize the playlist_title which is a folder name
+        sanitized_title = self.filename_sanitizer._sanitize_filename_component(playlist_title)
+        folder_path = os.path.join(base_dir, sanitized_title)
         os.makedirs(folder_path, exist_ok=True)
         return folder_path
     
@@ -209,82 +251,258 @@ class YouTubePlaylistDownloader:
             pass
     
     def _download_playlist(self, playlist_info: PlaylistInfo, 
-                          folder: str, config: DownloadConfig,
-                          progress_callback: Optional[ProgressListener]) -> None:
+                        folder: str, config: DownloadConfig,
+                        progress_callback: Optional[ProgressListener]) -> None:
         """Download the playlist"""
         if progress_callback:
             progress_callback.on_download_start(playlist_info.id)
         
-        # Prepare download options
+        # Ensure folder exists and all parent directories
+        os.makedirs(folder, exist_ok=True)
+        
+        output_template = os.path.join(folder, config.output_template)
+
+        # Verify template contains the folder path - Add this debugging check
+        if folder not in output_template:
+            self.logger.error(f"CRITICAL ERROR: Folder path missing from output template!")
+            self.logger.error(f"Folder: {folder}")
+            self.logger.error(f"Template: {output_template}")
+            # Even attempt to fix it directly
+            output_template = os.path.normpath(folder + '/' + '%(playlist_index)02d-%(title)s.%(ext)s')
+            self.logger.info(f"Attempting to fix template: {output_template}")
+
+        # Log what we're doing
+        self.logger.info(f"Using output template: {output_template}")
+        
+        # Prepare download options with minimal settings
         ydl_opts = {
-            'format': 'best',  # Simplest format string
+            'format': self.quality_formatter.get_format_string(
+                config.default_quality.value
+            ),
             'quiet': False,
             'noplaylist': False,
-            'outtmpl': os.path.join(folder, '%(playlist_index)02d-%(title)s.%(ext)s'),  # Simpler template
-            # Remove postprocessors and complex options
-        }    
+            'outtmpl': output_template,
+            #'restrictfilenames': True,  # This is important to avoid invalid characters
+        }
 
+        # Add postprocessing if enabled
+        if config.use_postprocessing:
+            ydl_opts['merge_output_format'] = config.preferred_format
+        
         # Add progress hook
         if progress_callback:
             def progress_hook(d):
-                self._handle_progress(d, playlist_info.id, progress_callback)
+                try:
+                    status = d.get('status', '')
+                    filename = d.get('filename', 'unknown file')
+                    
+                    # Create a safe version of current_file for display
+                    current_file = os.path.basename(filename) if filename else 'unknown'
+                    
+                    if status == 'downloading':
+                        # Safely calculate progress
+                        total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0) 
+                        downloaded_bytes = d.get('downloaded_bytes', 0)
+                        progress = (downloaded_bytes / total_bytes) * 100 if total_bytes else 0
+                        
+                        self._handle_progress(d, playlist_info.id, progress_callback)
+                        
+                    elif status == 'finished':
+                        progress_update = DownloadProgress(
+                            playlist_id=playlist_info.id,
+                            status=DownloadStatus.DOWNLOADING,
+                            progress=100,
+                            speed=0,
+                            eta=0,
+                            current_file=current_file,
+                            message=f"Processing: {current_file}"
+                        )
+                        progress_callback.on_progress(progress_update)
+                        
+                    elif status == 'error':
+                        error_msg = d.get('error', 'Unknown error')
+                        progress_update = DownloadProgress(
+                            playlist_id=playlist_info.id,
+                            status=DownloadStatus.FAILED,
+                            progress=0,
+                            speed=0,
+                            eta=0,
+                            current_file="",
+                            message=f"Error: {error_msg}"
+                        )
+                        progress_callback.on_progress(progress_update)
+                        
+                except Exception as hook_error:
+                    self.logger.error(f"Error in progress hook: {hook_error}")
+                    # Don't crash on hook errors
+                    
             ydl_opts['progress_hooks'] = [progress_hook]
         
         # Add cookies if configured
         if config.cookie_method != 'none':
             self._add_cookie_config(ydl_opts, config)
         
-        # Add bandwidth limit
-        if config.bandwidth_limit != "0":
-            ydl_opts['ratelimit'] = config.bandwidth_limit
+        # For debugging
+        self.logger.info(f"Download options: {ydl_opts}")
         
         # Download
         with YoutubeDL(ydl_opts) as ydl:
             try:
+                # First try to extract info only to verify URL works
+                try:
+                    self.logger.info(f"Extracting playlist info for {playlist_info.url}")
+                    ydl.extract_info(playlist_info.url, download=False)
+                except Exception as info_error:
+                    self.logger.error(f"Info extraction error: {info_error}")
+                    # Continue anyway - sometimes the info extraction fails but download works
+                
+                # Proceed with download
                 result = ydl.download([playlist_info.url])
                 self.logger.info(f"Download result: {result}")
+                
             except Exception as e:
-                self.logger.error(f"Download error: {e}")
+                error_msg = str(e)
+                self.logger.error(f"Download error: {error_msg}")
+                
+                # Try to provide more helpful error information
+                if "'filepath'" in error_msg:
+                    self.logger.error(f"This is a filepath error '{config.download_directory}'. Check folder permissions and path length.")
+                    self.logger.error(f"Error Message: {error_msg}")
+                    self.logger.error(f"Attempted to use template: {config.output_template}")
+                    # Try to get the current filename being processed if available
+                    current_filename = "unknown"
+                    if 'progress_hooks' in ydl_opts and ydl_opts['progress_hooks']:
+                        # This is a best-effort attempt to get the current filename
+                        # It may not always work depending on when the error occurred
+                        hook_data = getattr(ydl_opts['progress_hooks'][0], 'last_data', {})
+                        current_filename = hook_data.get('filename', 'unknown')
+                    self.logger.error(f"Current file being downloaded: {current_filename}")
+                    
+                    # Try to test write permissions
+                    try:
+                        test_path = os.path.join(folder, "write_test.txt")
+                        with open(test_path, 'w') as f:
+                            f.write("test")
+                        os.remove(test_path)
+                        self.logger.info("Write permission test: PASSED")
+                    except Exception as perm_e:
+                        self.logger.error(f"Write permission error: {perm_e}")
+                        
+                    # Test with different file extensions
+                    for ext in ['.mp4', '.webm', '.mkv']:
+                        try:
+                            test_video_path = os.path.join(folder, f"test_video{ext}")
+                            with open(test_video_path, 'wb') as f:
+                                f.write(b'test')
+                            self.logger.info(f"Test file created successfully with extension: {ext}")
+                            os.remove(test_video_path)
+                        except Exception as test_e:
+                            self.logger.error(f"Failed to create test file with extension {ext}: {test_e}")
+                            
+                    # Test path components
+                    path_components = folder.split(os.path.sep)
+                    for i in range(1, len(path_components) + 1):
+                        test_path = os.path.sep.join(path_components[:i])
+                        if test_path:  # Skip empty path components
+                            try:
+                                if os.path.exists(test_path):
+                                    access_read = os.access(test_path, os.R_OK)
+                                    access_write = os.access(test_path, os.W_OK)
+                                    access_exec = os.access(test_path, os.X_OK)
+                                    self.logger.info(f"Path component {test_path}: exists={True}, read={access_read}, write={access_write}, execute={access_exec}")
+                                else:
+                                    self.logger.error(f"Path component does not exist: {test_path}")
+                            except Exception as path_e:
+                                self.logger.error(f"Error checking path component {test_path}: {path_e}")
+                
                 raise
 
     def _handle_progress(self, d: Dict[str, Any], playlist_id: str,
                         callback: ProgressListener) -> None:
-        """Handle progress updates from yt-dlp"""
-        if d['status'] == 'downloading':
-            total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
-            downloaded_bytes = d.get('downloaded_bytes', 0)
-            speed = d.get('speed', 0)
-            eta = d.get('eta', 0)
+        """Handle progress updates from yt-dlp with improved error handling"""
+        try:
+            if d['status'] == 'downloading':
+                # Safe retrieval of values with fallbacks
+                total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+                downloaded_bytes = d.get('downloaded_bytes', 0)
+                speed = d.get('speed', 0)
+                eta = d.get('eta', 0)
+                
+                progress = 0
+                if total_bytes > 0:
+                    progress = (downloaded_bytes / total_bytes) * 100
+                
+                # Safely get filename
+                filename = "unknown.mp4"
+                if 'filename' in d:
+                    try:
+                        filename = os.path.basename(d.get('filename', ''))
+                    except:
+                        pass
+                
+                progress_update = DownloadProgress(
+                    playlist_id=playlist_id,
+                    status=DownloadStatus.DOWNLOADING,
+                    progress=progress,
+                    speed=speed,
+                    eta=eta,
+                    current_file=filename,
+                    message=f"Downloading: {filename}"
+                )
+                callback.on_progress(progress_update)
             
-            progress = 0
-            if total_bytes > 0:
-                progress = (downloaded_bytes / total_bytes) * 100
-            
-            filename = os.path.basename(d.get('filename', ''))
-            
-            progress_update = DownloadProgress(
-                playlist_id=playlist_id,
-                status=DownloadStatus.DOWNLOADING,
-                progress=progress,
-                speed=speed,
-                eta=eta,
-                current_file=filename,
-                message=f"Downloading: {filename}"
-            )
-            callback.on_progress(progress_update)
+            elif d['status'] == 'finished':
+                # Safely get filename
+                filename = "unknown.mp4"
+                if 'filename' in d:
+                    try:
+                        filename = os.path.basename(d.get('filename', ''))
+                    except:
+                        pass
+                    
+                progress_update = DownloadProgress(
+                    playlist_id=playlist_id,
+                    status=DownloadStatus.DOWNLOADING,
+                    progress=100,
+                    speed=0,
+                    eta=0,
+                    current_file=filename,
+                    message=f"Processing: {filename}"
+                )
+                callback.on_progress(progress_update)
+                
+            # Handle error status
+            elif d['status'] == 'error':
+                error_msg = d.get('error', 'Unknown error')
+                self.logger.error(f"Download error in progress hook: {error_msg}")
+                
+                progress_update = DownloadProgress(
+                    playlist_id=playlist_id,
+                    status=DownloadStatus.FAILED,
+                    progress=0,
+                    speed=0,
+                    eta=0,
+                    current_file="",
+                    message=f"Error: {error_msg}"
+                )
+                callback.on_progress(progress_update)
         
-        elif d['status'] == 'finished':
-            filename = os.path.basename(d.get('filename', ''))
-            progress_update = DownloadProgress(
-                playlist_id=playlist_id,
-                status=DownloadStatus.DOWNLOADING,
-                progress=100,
-                speed=0,
-                eta=0,
-                current_file=filename,
-                message=f"Processing: {filename}"
-            )
-            callback.on_progress(progress_update)
+        except Exception as e:
+            # Log the error but don't crash
+            self.logger.error(f"Error in progress handler: {e}")
+            # Try to notify about the error
+            try:
+                callback.on_progress(DownloadProgress(
+                    playlist_id=playlist_id,
+                    status=DownloadStatus.DOWNLOADING,
+                    progress=0,
+                    speed=0,
+                    eta=0,
+                    current_file="",
+                    message=f"Progress update error: {str(e)}"
+                ))
+            except:
+                pass  # If even the error notification fails, just continue
     
     def _add_cookie_config(self, ydl_opts: Dict, config: DownloadConfig) -> None:
         """Add cookie configuration to yt-dlp options"""

@@ -41,7 +41,14 @@ class EnvironmentConfigRepository(ConfigurationRepository):
             auto_retry_failed=env.get_bool("YOUTUBE_AUTO_RETRY", file_config.auto_retry_failed),
             
             # Other settings
-            check_duplicates=env.get_bool("YOUTUBE_CHECK_DUPLICATES", file_config.check_duplicates)
+            check_duplicates=env.get_bool("YOUTUBE_CHECK_DUPLICATES", file_config.check_duplicates),
+            
+            # Output settings (new)
+            output_template=env.get("YOUTUBE_OUTPUT_TEMPLATE", file_config.output_template),
+            create_playlist_folder=env.get_bool("YOUTUBE_CREATE_PLAYLIST_FOLDER", file_config.create_playlist_folder),
+            sanitize_filenames=env.get_bool("YOUTUBE_SANITIZE_FILENAMES", file_config.sanitize_filenames),
+            preferred_format=env.get("YOUTUBE_PREFERRED_FORMAT", file_config.preferred_format),
+            use_postprocessing=env.get_bool("YOUTUBE_USE_POSTPROCESSING", file_config.use_postprocessing)
         )
         
         return config
@@ -57,7 +64,14 @@ class EnvironmentConfigRepository(ConfigurationRepository):
             'check_duplicates': config.check_duplicates,
             'bandwidth_limit': config.bandwidth_limit,
             'cookie_method': config.cookie_method,
-            'cookie_file': config.cookie_file
+            'cookie_file': config.cookie_file,
+            
+            # Output settings
+            'output_template': config.output_template,
+            'create_playlist_folder': config.create_playlist_folder,
+            'sanitize_filenames': config.sanitize_filenames,
+            'preferred_format': config.preferred_format,
+            'use_postprocessing': config.use_postprocessing
         }
         
         with open(self.config_file, 'w') as f:
