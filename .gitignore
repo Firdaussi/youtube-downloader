@@ -176,3 +176,4 @@ cython_debug/
 # My stuff
 loader/cookies.firefox-private.txt
 loader/.env
+loader/download_history.json
