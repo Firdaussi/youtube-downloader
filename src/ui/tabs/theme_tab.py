@@ -4,16 +4,20 @@ import tkinter as tk
 from tkinter import ttk, colorchooser, messagebox
 from typing import Dict, Any, Optional
 
-from theme_manager import ThemeManager
-
+from src.ui.theme.theme_manager import ThemeManager
+from src.utils.logging_utils import get_logger
 
 class ThemeTab(tk.Frame):
     """Theme selection and customization tab"""
     
     def __init__(self, parent, theme_manager: ThemeManager, **kwargs):
         super().__init__(parent, **kwargs)
+        # Get tab-specific logger
+        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
+        
         self.theme_manager = theme_manager
         self.create_widgets()
+        self.logger.debug("Theme tab initialized")
     
     def create_widgets(self):
         """Create theme tab widgets"""
@@ -177,7 +181,13 @@ class ThemeTab(tk.Frame):
     
     def _apply_theme(self, theme_id):
         """Apply selected theme"""
-        if self.theme_manager.set_current_theme(theme_id):
-            messagebox.showinfo("Theme Changed", f"Theme changed to {self.theme_var.get()}")
-        else:
-            messagebox.showerror("Error", "Failed to apply theme")
+        try:
+            if self.theme_manager.set_current_theme(theme_id):
+                self.logger.info(f"Theme changed to {self.theme_var.get()}")
+                messagebox.showinfo("Theme Changed", f"Theme changed to {self.theme_var.get()}")
+            else:
+                self.logger.error(f"Failed to apply theme: {theme_id}")
+                messagebox.showerror("Error", "Failed to apply theme")
+        except Exception as e:
+            self.logger.error(f"Error applying theme: {e}")
+            messagebox.showerror("Error", f"Error applying theme: {str(e)}")

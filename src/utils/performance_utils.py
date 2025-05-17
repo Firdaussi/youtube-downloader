@@ -1,9 +1,13 @@
-# performance_utils.py - Utilities for performance optimization
+# src/utils/performance_utils.py
 
 import time
 import threading
+import logging
 from typing import Callable, Optional, Dict, Any, TypeVar, Generic
 from functools import wraps
+
+# Get a logger for this module
+logger = logging.getLogger(__name__)
 
 # Type variable for generic functions
 T = TypeVar('T')
@@ -108,7 +112,11 @@ class Debouncer(Generic[T]):
             self.timer = None
         
         if args is not None:
-            return func(*args, **kwargs)
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                logger.error(f"Error in debounced function: {e}")
+                return None
         return None
 
 
@@ -185,7 +193,7 @@ class BatchProcessor:
             self.processor_func(current_batch)
             return True
         except Exception as e:
-            print(f"Error processing batch: {e}")
+            logger.error(f"Error processing batch: {e}")
             return False
     
     def flush(self) -> bool:
@@ -222,6 +230,8 @@ class ProgressThrottler:
         # For status change detection
         self.last_status: Dict[str, str] = {}
         self.last_message: Dict[str, str] = {}
+        
+        logger.debug("ProgressThrottler initialized")
     
     def should_update(self, playlist_id: str, progress: float, 
                      status: Optional[str] = None, message: Optional[str] = None,
@@ -360,6 +370,7 @@ class ProgressThrottler:
                 self.last_progress.clear()
                 self.last_status.clear()
                 self.last_message.clear()
+                logger.debug("Reset all throttling state")
             elif playlist_id in self.last_update_time:
                 # Reset specific download
                 del self.last_update_time[playlist_id]
@@ -372,3 +383,4 @@ class ProgressThrottler:
                     del self.last_status[playlist_id]
                 if playlist_id in self.last_message:
                     del self.last_message[playlist_id]
+                logger.debug(f"Reset throttling state for {playlist_id}")

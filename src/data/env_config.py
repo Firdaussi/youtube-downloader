@@ -2,10 +2,9 @@
 
 import json
 import os
-from typing import Dict, Any
-from models import DownloadConfig, DownloadQuality
-from interfaces import ConfigurationRepository
-from environment import env
+from src.data.models import DownloadConfig, DownloadQuality
+from src.core.interfaces import ConfigurationRepository
+from src.utils.environment import env
 
 class EnvironmentConfigRepository(ConfigurationRepository):
     """Configuration repository that uses environment variables with file fallback"""
@@ -14,11 +13,11 @@ class EnvironmentConfigRepository(ConfigurationRepository):
         self.config_file = config_file
     
     def load_config(self) -> DownloadConfig:
-        """Load configuration from environment variables with fallback to file"""
+        """Load configuration from src.utils.environment variables with fallback to file"""
         # Load from file first as fallback
         file_config = self._load_from_file()
         
-        # Create config from environment variables
+        # Create config from src.utils.environment variables
         config = DownloadConfig(
             # System paths
             download_directory=env.get("YOUTUBE_DOWNLOAD_DIR", file_config.download_directory),

@@ -1,4 +1,4 @@
-# environment.py - Environment configuration handling
+# src/utils/environment.py
 
 import os
 import logging
@@ -12,6 +12,7 @@ try:
 except ImportError:
     DOTENV_AVAILABLE = False
 
+# Get a basic logger - we'll use basic logging, not our custom utility
 logger = logging.getLogger(__name__)
 
 class Environment:

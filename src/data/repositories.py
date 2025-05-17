@@ -1,10 +1,8 @@
-# repositories.py - Fixed repository implementations
-
 import json
 import os
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
-from models import DownloadConfig, HistoryEntry, DownloadQuality
+from src.data.models import DownloadConfig, HistoryEntry, DownloadQuality
 import time
 
 class JsonConfigurationRepository:

@@ -1,0 +1,59 @@
+youtube-downloader/
+├── src/
+│   ├── __init__.py
+│   ├── core/                  # Core functionality
+│   │   ├── __init__.py
+│   │   ├── downloader.py      # Core download functionality
+│   │   ├── download_service.py # Orchestration service
+│   │   ├── interfaces.py      # Interfaces
+│   │   ├── queue_manager.py   # Queue management
+│   │   └── validators.py      # Validation utilities
+│   │
+│   ├── data/                  # Data handling
+│   │   ├── __init__.py
+│   │   ├── models.py          # Data models
+│   │   ├── repositories.py    # Data repositories
+│   │   └── env_config.py      # Environment configuration
+│   │
+│   ├── ui/                    # User interface
+│   │   ├── __init__.py
+│   │   ├── gui.py             # Main GUI implementation
+│   │   ├── presenters.py      # UI presenters
+│   │   ├── tabs/              # Tab implementations
+│   │   │   ├── __init__.py
+│   │   │   ├── download_tab.py
+│   │   │   ├── history_tab.py
+│   │   │   ├── settings_tab.py
+│   │   │   └── theme_tab.py
+│   │   └── theme/             # Theme implementations
+│   │       ├── __init__.py
+│   │       └── theme_manager.py
+│   │
+│   ├── utils/                 # Utility modules
+│   │   ├── __init__.py
+│   │   ├── path_utils.py      # Path handling
+│   │   ├── performance_utils.py # Performance optimizations
+│   │   ├── environment.py     # Environment handling
+│   │   └── logging_utils.py   # Logging setup
+│   │
+│   └── integration.py         # Integration utilities
+│
+├── bin/                       # Executable scripts
+│   └── youtube_downloader.py  # Main entry point script
+│
+├── tests/                     # Tests
+│   ├── __init__.py
+│   ├── test_downloader.py
+│   ├── test_path_utils.py
+│   └── ...
+│
+├── resources/                 # Non-code resources
+│   ├── themes/                # Theme definitions
+│   └── icons/                 # Application icons
+│
+├── docs/                      # Documentation
+│   └── README.md
+│
+├── setup.py                   # Package setup script
+├── requirements.txt           # Dependencies
+└── README.md                  # Project README

@@ -1,13 +1,11 @@
-# theme_manager.py - Theme support for the application
-
 import json
 import os
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 from typing import Dict, Any, Optional, List, Tuple
-import logging
+from src.utils.logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class Theme:
     """Represents a UI theme with colors and styles"""
@@ -166,6 +164,9 @@ class ThemeManager:
     }
     
     def __init__(self, theme_file: str = "themes.json"):
+        # Get class-specific logger
+        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
+        
         self.theme_file = theme_file
         self.current_theme_name = "light"
         self.themes: Dict[str, Theme] = {}
@@ -178,11 +179,13 @@ class ThemeManager:
             
         # Load custom themes
         self._load_themes()
+        self.logger.info(f"Initialized with theme: {self.current_theme_name}")
     
     def _load_themes(self) -> None:
         """Load themes from file"""
         if not os.path.exists(self.theme_file):
             # Save default themes if file doesn't exist
+            self.logger.info(f"Theme file not found, creating default: {self.theme_file}")
             self._save_themes()
             return
             
@@ -199,8 +202,10 @@ class ThemeManager:
             if "current_theme" in data:
                 self.current_theme_name = data["current_theme"]
                 
+            self.logger.debug(f"Loaded themes from {self.theme_file}: {list(self.themes.keys())}")
+                
         except Exception as e:
-            logger.error(f"Error loading themes: {e}")
+            self.logger.error(f"Error loading themes: {e}")
     
     def _save_themes(self) -> None:
         """Save themes to file"""

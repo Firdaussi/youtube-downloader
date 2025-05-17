@@ -1,12 +1,13 @@
-# path_utils.py - Centralized path handling utility
+# src/utils/path_utils.py
 
 import os
 import re
 import logging
 import platform
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple
 
+# Get a logger for this module
 logger = logging.getLogger(__name__)
 
 class PathUtils:

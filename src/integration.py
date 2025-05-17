@@ -1,26 +1,27 @@
-# integration.py - Integration of all improvements
-
 import tkinter as tk
-from tkinter import ttk, messagebox
-import sys
 import os
-import logging
-from typing import Any, Dict, List, Optional
 
 # Import improvements
-from path_utils import PathUtils
-from performance_utils import ProgressThrottler, Debouncer
-from theme_manager import ThemeManager, Theme
-from theme_tab import ThemeTab
-
+from src.utils.path_utils import PathUtils
+from src.utils.performance_utils import ProgressThrottler, Debouncer
+from src.ui.theme.theme_manager import ThemeManager
+from src.ui.tabs.theme_tab import ThemeTab
+    
+# Import original components
+from src.data.repositories import JsonHistoryRepository
+from src.data.env_config import EnvironmentConfigRepository
+from src.core.validators import YouTubeCookieValidator, FileNameSanitizer, QualityFormatter
+    
 # Original imports
-from models import DownloadConfig, DownloadProgress, DownloadStatus
-from download_service import DownloadService
-from downloader import YouTubePlaylistDownloader
-from presenters import DownloadPresenter, HistoryPresenter, SettingsPresenter
-from gui import YouTubeDownloaderApp, DownloadTab, HistoryTab, SettingsTab
+from src.data.models import DownloadProgress
+from src.core.download_service import DownloadService
+from src.core.downloader import YouTubePlaylistDownloader
+from src.ui.presenters import DownloadPresenter, HistoryPresenter, SettingsPresenter
+from src.ui.gui import YouTubeDownloaderApp, DownloadTab
+from src.utils.logging_utils import get_logger
 
-logger = logging.getLogger(__name__)
+# Create a module-specific logger
+logger = get_logger(__name__)
 
 class EnhancedYouTubeDownloaderApp(YouTubeDownloaderApp):
     """Enhanced version of the YouTube Downloader App with improvements"""
@@ -172,29 +173,12 @@ class EnhancedYouTubePlaylistDownloader(YouTubePlaylistDownloader):
 
 def create_enhanced_application():
     """Create enhanced application with all improvements"""
-    # Setup logging
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    
-    # Create handlers
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    
-    # Create formatters
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    console_handler.setFormatter(formatter)
-    
-    # Add handlers
-    logger.addHandler(console_handler)
+    # Get the logger from your utility instead of using Python's logging directly
+    logger = get_logger(__name__)
     
     # Log startup
     logger.info("Starting Enhanced YouTube Playlist Downloader")
-    
-    # Import original components
-    from repositories import JsonHistoryRepository
-    from env_config import EnvironmentConfigRepository
-    from validators import YouTubeCookieValidator, FileNameSanitizer, QualityFormatter
-    
+
     # Create repositories
     config_repository = EnvironmentConfigRepository()
     history_repository = JsonHistoryRepository()
@@ -210,7 +194,7 @@ def create_enhanced_application():
         filename_sanitizer=filename_sanitizer,
         cookie_validator=cookie_validator,
         history_repository=history_repository,
-        logger=logger.getChild('Downloader')
+        logger=get_logger('Downloader')  # Use get_logger instead
     )
     
     # Create download service
@@ -218,7 +202,7 @@ def create_enhanced_application():
         downloader=youtube_downloader,
         history_repository=history_repository,
         cookie_validator=cookie_validator,
-        logger=logger.getChild('DownloadService')
+        logger=get_logger('DownloadService')  # Use get_logger instead
     )
     
     # Create presenters
@@ -226,7 +210,7 @@ def create_enhanced_application():
         download_service=download_service,
         config_repository=config_repository,
         history_repository=history_repository,
-        logger=logger.getChild('DownloadPresenter')
+        logger=get_logger('DownloadPresenter')  # Use get_logger instead
     )
     
     history_presenter = HistoryPresenter(
@@ -254,8 +238,3 @@ def create_enhanced_application():
     app.download_tab = download_tab
     
     return app
-
-
-if __name__ == "__main__":
-    app = create_enhanced_application()
-    app.mainloop()

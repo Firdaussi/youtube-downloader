@@ -1,18 +1,19 @@
-# download_service.py - Fixed download service implementation
-
-import logging
 import time
+import logging
 from concurrent.futures import ThreadPoolExecutor, Future
-from typing import List, Optional, Dict, Set
+from typing import List, Optional, Dict
 from datetime import datetime
 
-from models import DownloadConfig, DownloadStatus, HistoryEntry
-from interfaces import (
+from src.data.models import DownloadConfig
+from src.core.interfaces import (
     PlaylistDownloader, HistoryRepository, 
     ProgressListener, CookieValidator
 )
-from queue_manager import DownloadQueue
+from src.core.queue_manager import DownloadQueue
+from src.utils.logging_utils import get_logger
 
+# Get module-specific logger
+logger = get_logger(__name__)
 
 class DownloadService:
     """Service that orchestrates playlist downloads"""
@@ -21,15 +22,18 @@ class DownloadService:
                  downloader: PlaylistDownloader,
                  history_repository: HistoryRepository,
                  cookie_validator: CookieValidator,
-                 logger: logging.Logger):
+                 logger: Optional[logging.Logger] = None):
         self.downloader = downloader
         self.history_repository = history_repository
         self.cookie_validator = cookie_validator
-        self.logger = logger
+        # Use provided logger or get a class-specific one
+        self.logger = logger or get_logger(f"{__name__}.DownloadService")
         self.download_queue = DownloadQueue()
         self.active_downloads: Dict[str, Future] = {}
         self.executor: Optional[ThreadPoolExecutor] = None
         self.is_downloading = False
+        
+        self.logger.debug("Download service initialized")
     
     def start_downloads(self, 
                        playlist_ids: List[str], 
@@ -37,6 +41,7 @@ class DownloadService:
                        progress_listener: Optional[ProgressListener] = None) -> bool:
         """Start downloading playlists"""
         if self.is_downloading:
+            self.logger.warning("Download already in progress, ignoring request")
             return False
         
         # Validate cookies first
@@ -46,57 +51,75 @@ class DownloadService:
             return False
         
         self.is_downloading = True
+        self.logger.info(f"Starting downloads for {len(playlist_ids)} playlists")
         
         # Add playlists to queue
         for playlist_id in playlist_ids:
             self.download_queue.add_playlist(playlist_id)
+            self.logger.debug(f"Added playlist to queue: {playlist_id}")
         
         # Start processing queue
         self.executor = ThreadPoolExecutor(max_workers=config.max_concurrent_downloads)
+        self.logger.info(f"Created thread pool with {config.max_concurrent_downloads} workers")
         self._process_queue(config, progress_listener)
         
         return True
     
     def stop_downloads(self) -> None:
         """Stop all downloads"""
+        if not self.is_downloading:
+            self.logger.debug("No active downloads to stop")
+            return
+            
+        self.logger.info("Stopping all downloads")
         self.is_downloading = False
         
         # Cancel active downloads
-        for future in self.active_downloads.values():
+        for playlist_id, future in self.active_downloads.items():
+            self.logger.debug(f"Cancelling download for playlist: {playlist_id}")
             future.cancel()
         
         if self.executor:
+            self.logger.debug("Shutting down executor")
             self.executor.shutdown(wait=False)
             self.executor = None
         
         self.active_downloads.clear()
+        self.logger.info("All downloads stopped")
     
     def pause_downloads(self) -> None:
         """Pause all active downloads"""
+        self.logger.info("Pausing all downloads")
         self.downloader.pause()
     
     def resume_downloads(self) -> None:
         """Resume paused downloads"""
+        self.logger.info("Resuming all downloads")
         self.downloader.resume()
     
     def get_queue_status(self) -> Dict[str, int]:
         """Get current queue status"""
-        return {
+        status = {
             'pending': self.download_queue.pending_count,
             'completed': self.download_queue.completed_count,
             'failed': self.download_queue.failed_count,
             'active': len(self.active_downloads)
         }
+        self.logger.debug(f"Queue status: {status}")
+        return status
     
     def retry_failed(self, 
                     config: DownloadConfig,
                     progress_listener: Optional[ProgressListener] = None) -> None:
         """Retry failed downloads"""
         failed_ids = self.download_queue.get_failed_ids()
+        self.logger.info(f"Retrying {len(failed_ids)} failed downloads")
+        
         self.download_queue.clear_failed()
         
         for playlist_id in failed_ids:
             self.download_queue.add_playlist(playlist_id)
+            self.logger.debug(f"Re-added failed playlist to queue: {playlist_id}")
         
         self._process_queue(config, progress_listener)
     
@@ -104,15 +127,19 @@ class DownloadService:
                       config: DownloadConfig,
                       progress_listener: Optional[ProgressListener] = None) -> None:
         """Process downloads from the queue"""
+        self.logger.debug("Starting queue processor")
+        
         # Start a background thread to process the queue
         def queue_processor():
             try:
+                self.logger.debug("Queue processor thread started")
                 while self.is_downloading:
                     # Get next playlist from queue
                     next_item = self.download_queue.get_next()
                     if not next_item:
                         # Check if there are still active downloads
                         if not self.active_downloads:
+                            self.logger.info("Queue empty and no active downloads, completing")
                             self._on_all_downloads_complete(config, progress_listener)
                             break
                         # Wait for active downloads to complete
@@ -126,6 +153,7 @@ class DownloadService:
                         completed_ids = []
                         for playlist_id, future in list(self.active_downloads.items()):
                             if future.done():
+                                self.logger.debug(f"Download completed: {playlist_id}")
                                 completed_ids.append(playlist_id)
                         
                         for playlist_id in completed_ids:
@@ -136,16 +164,19 @@ class DownloadService:
                     
                     # Break loop if downloads were stopped
                     if not self.is_downloading:
+                        self.logger.debug("Download stopped, breaking queue processor loop")
                         break
                     
                     # Start download
+                    playlist_id = next_item.playlist_id
+                    self.logger.info(f"Starting download for playlist: {playlist_id}")
                     future = self.executor.submit(
                         self._download_with_handling,
-                        next_item.playlist_id,
+                        playlist_id,
                         config,
                         progress_listener
                     )
-                    self.active_downloads[next_item.playlist_id] = future
+                    self.active_downloads[playlist_id] = future
             
             except Exception as e:
                 self.logger.error(f"Error in queue processor: {e}", exc_info=True)
@@ -154,6 +185,7 @@ class DownloadService:
         # Start queue processor in a separate thread
         processor_thread = ThreadPoolExecutor(max_workers=1)
         processor_thread.submit(queue_processor)
+        self.logger.debug("Queue processor thread submitted")
     
     def _download_with_handling(self,
                                playlist_id: str,
@@ -161,6 +193,8 @@ class DownloadService:
                                progress_listener: Optional[ProgressListener] = None) -> None:
         """Download with error handling"""
         try:
+            self.logger.debug(f"Starting download handler for playlist: {playlist_id}")
+            
             # Call the downloader
             self.downloader.download(playlist_id, config, progress_listener)
             
@@ -171,6 +205,7 @@ class DownloadService:
                 'timestamp': datetime.now().isoformat()
             }
             self.download_queue.mark_completed(playlist_id, completion_info)
+            self.logger.info(f"Download completed successfully: {playlist_id}")
             
         except Exception as e:
             error_msg = str(e)
@@ -188,8 +223,9 @@ class DownloadService:
             if playlist_id in self.active_downloads:
                 try:
                     del self.active_downloads[playlist_id]
-                except:
-                    pass  # Ignore any errors during cleanup
+                    self.logger.debug(f"Removed from active downloads: {playlist_id}")
+                except Exception as e:
+                    self.logger.warning(f"Error cleaning up active download: {e}")
     
     def _on_all_downloads_complete(self, 
                                   config: DownloadConfig,
@@ -204,6 +240,7 @@ class DownloadService:
         else:
             # Shutdown executor
             if self.executor:
+                self.logger.debug("Shutting down executor")
                 self.executor.shutdown(wait=True)
                 self.executor = None
             

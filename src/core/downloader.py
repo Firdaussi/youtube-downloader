@@ -2,21 +2,17 @@
 
 import os
 import time
-import logging
 from typing import Optional, Dict, Any
 from yt_dlp import YoutubeDL
 import re
 from pathlib import Path
 from datetime import datetime
 
-from models import (
+from src.data.models import (
     DownloadConfig, PlaylistInfo, DownloadProgress, 
     DownloadStatus
 )
-from interfaces import (
-    PlaylistDownloader, ProgressListener, QualityFormatter,
-    FileNameSanitizer, HistoryRepository
-)
+from src.core.interfaces import ProgressListener
 
 
 class YouTubePlaylistDownloader:

@@ -1,0 +1,173 @@
+{
+  "current_theme": "high_contrast",
+  "themes": {
+    "light": {
+      "name": "Light",
+      "colors": {
+        "bg_primary": "#ffffff",
+        "bg_secondary": "#f0f0f0",
+        "fg_primary": "#000000",
+        "fg_secondary": "#555555",
+        "accent": "#2196F3",
+        "accent_hover": "#1976D2",
+        "success": "#4CAF50",
+        "warning": "#FF9800",
+        "error": "#F44336",
+        "border": "#e0e0e0",
+        "input_bg": "#ffffff",
+        "input_fg": "#000000",
+        "button_bg": "#e0e0e0",
+        "button_fg": "#000000",
+        "highlight_bg": "#e3f2fd",
+        "highlight_fg": "#1565C0",
+        "tab_bg": "#f0f0f0",
+        "tab_fg": "#000000",
+        "tab_active_bg": "#ffffff",
+        "tab_active_fg": "#2196F3",
+        "progressbar": "#2196F3",
+        "treeview_bg": "#ffffff",
+        "treeview_fg": "#000000",
+        "treeview_selected_bg": "#e3f2fd",
+        "treeview_selected_fg": "#1565C0",
+        "current_playlist": "#d0f0c0",
+        "done_playlist": "#e0e0e0",
+        "failed_playlist": "#f0c0c0"
+      },
+      "fonts": {
+        "default": [
+          "Segoe UI",
+          10
+        ],
+        "heading": [
+          "Segoe UI",
+          12,
+          "bold"
+        ],
+        "large": [
+          "Segoe UI",
+          14
+        ],
+        "small": [
+          "Segoe UI",
+          9
+        ],
+        "monospace": [
+          "Courier New",
+          10
+        ]
+      }
+    },
+    "dark": {
+      "name": "Dark",
+      "colors": {
+        "bg_primary": "#262626",
+        "bg_secondary": "#1e1e1e",
+        "fg_primary": "#ffffff",
+        "fg_secondary": "#b0b0b0",
+        "accent": "#42a5f5",
+        "accent_hover": "#64b5f6",
+        "success": "#66bb6a",
+        "warning": "#ffa726",
+        "error": "#ef5350",
+        "border": "#424242",
+        "input_bg": "#333333",
+        "input_fg": "#ffffff",
+        "button_bg": "#424242",
+        "button_fg": "#ffffff",
+        "highlight_bg": "#1e3a5f",
+        "highlight_fg": "#90caf9",
+        "tab_bg": "#1e1e1e",
+        "tab_fg": "#b0b0b0",
+        "tab_active_bg": "#333333",
+        "tab_active_fg": "#64b5f6",
+        "progressbar": "#42a5f5",
+        "treeview_bg": "#333333",
+        "treeview_fg": "#ffffff",
+        "treeview_selected_bg": "#1e3a5f",
+        "treeview_selected_fg": "#90caf9",
+        "current_playlist": "#2a4027",
+        "done_playlist": "#3a3a3a",
+        "failed_playlist": "#4d2c2c"
+      },
+      "fonts": {
+        "default": [
+          "Segoe UI",
+          10
+        ],
+        "heading": [
+          "Segoe UI",
+          12,
+          "bold"
+        ],
+        "large": [
+          "Segoe UI",
+          14
+        ],
+        "small": [
+          "Segoe UI",
+          9
+        ],
+        "monospace": [
+          "Courier New",
+          10
+        ]
+      }
+    },
+    "high_contrast": {
+      "name": "High Contrast",
+      "colors": {
+        "bg_primary": "#000000",
+        "bg_secondary": "#121212",
+        "fg_primary": "#ffffff",
+        "fg_secondary": "#f0f0f0",
+        "accent": "#00ffff",
+        "accent_hover": "#40ffff",
+        "success": "#00ff00",
+        "warning": "#ffff00",
+        "error": "#ff0000",
+        "border": "#ffffff",
+        "input_bg": "#121212",
+        "input_fg": "#ffffff",
+        "button_bg": "#333333",
+        "button_fg": "#ffffff",
+        "highlight_bg": "#003366",
+        "highlight_fg": "#ffffff",
+        "tab_bg": "#121212",
+        "tab_fg": "#ffffff",
+        "tab_active_bg": "#333333",
+        "tab_active_fg": "#00ffff",
+        "progressbar": "#00ffff",
+        "treeview_bg": "#121212",
+        "treeview_fg": "#ffffff",
+        "treeview_selected_bg": "#003366",
+        "treeview_selected_fg": "#ffffff",
+        "current_playlist": "#006600",
+        "done_playlist": "#444444",
+        "failed_playlist": "#660000"
+      },
+      "fonts": {
+        "default": [
+          "Segoe UI",
+          11
+        ],
+        "heading": [
+          "Segoe UI",
+          13,
+          "bold"
+        ],
+        "large": [
+          "Segoe UI",
+          15
+        ],
+        "small": [
+          "Segoe UI",
+          10
+        ],
+        "monospace": [
+          "Courier New",
+          11
+        ]
+      }
+    }
+  }
+}

@@ -1,5 +1,3 @@
-# models.py - Domain models and data structures with generic defaults
-
 import os
 from dataclasses import dataclass
 from enum import Enum

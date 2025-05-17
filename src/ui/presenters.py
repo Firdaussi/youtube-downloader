@@ -2,14 +2,13 @@
 
 import logging
 from typing import List, Optional, Callable
-from datetime import datetime
 
-from models import DownloadConfig, DownloadProgress, HistoryEntry
-from interfaces import (
+from src.data.models import DownloadConfig, DownloadProgress, HistoryEntry
+from src.core.interfaces import (
     ConfigurationRepository, HistoryRepository, ProgressListener
 )
-from download_service import DownloadService
-
+from src.core.download_service import DownloadService
+from src.utils.logging_utils import get_logger
 
 class DownloadPresenter(ProgressListener):
     """Presenter for download tab functionality"""
@@ -18,11 +17,13 @@ class DownloadPresenter(ProgressListener):
                  download_service: DownloadService,
                  config_repository: ConfigurationRepository,
                  history_repository: HistoryRepository,
-                 logger: logging.Logger):
+                 logger: Optional[logging.Logger] = None):
+        # Use provided logger or get one based on module name
+        self.logger = logger or get_logger(f"{__name__}.DownloadPresenter")
+        
         self.download_service = download_service
         self.config_repository = config_repository
         self.history_repository = history_repository
-        self.logger = logger
         
         # UI callbacks
         self.on_progress_callback: Optional[Callable[[DownloadProgress], None]] = None
@@ -111,14 +112,23 @@ class HistoryPresenter:
     
     def __init__(self, history_repository: HistoryRepository):
         self.history_repository = history_repository
+        self.logger = get_logger(f"{__name__}.HistoryPresenter")
     
     def get_history(self) -> List[HistoryEntry]:
         """Get download history"""
-        return self.history_repository.load_history()
+        try:
+            return self.history_repository.load_history()
+        except Exception as e:
+            self.logger.error(f"Error loading history: {e}")
+            return []
     
     def clear_history(self) -> None:
         """Clear download history"""
-        self.history_repository.clear_history()
+        try:
+            self.history_repository.clear_history()
+            self.logger.info("Download history cleared")
+        except Exception as e:
+            self.logger.error(f"Error clearing history: {e}")
     
     def format_history_entry(self, entry: HistoryEntry) -> tuple:
         """Format history entry for display"""
@@ -139,22 +149,37 @@ class SettingsPresenter:
                  cookie_validator):
         self.config_repository = config_repository
         self.cookie_validator = cookie_validator
+        self.logger = get_logger(f"{__name__}.SettingsPresenter")
     
     def load_config(self) -> DownloadConfig:
         """Load configuration"""
-        return self.config_repository.load_config()
+        try:
+            return self.config_repository.load_config()
+        except Exception as e:
+            self.logger.error(f"Error loading configuration: {e}")
+            return DownloadConfig()
     
     def save_config(self, config: DownloadConfig) -> bool:
         """Save configuration"""
         # Validate cookies before saving
         if not self.cookie_validator.validate(config.cookie_method, config.cookie_file):
+            self.logger.warning("Cookie validation failed")
             return False
         
-        self.config_repository.save_config(config)
-        return True
+        try:
+            self.config_repository.save_config(config)
+            self.logger.info("Configuration saved successfully")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error saving configuration: {e}")
+            return False
     
     def validate_cookies(self, method: str, file_path: Optional[str]) -> tuple[bool, List[str]]:
         """Validate cookie settings"""
         is_valid = self.cookie_validator.validate(method, file_path)
         errors = self.cookie_validator.get_validation_errors()
+        
+        if not is_valid:
+            self.logger.warning(f"Cookie validation failed: {', '.join(errors)}")
+        
         return is_valid, errors

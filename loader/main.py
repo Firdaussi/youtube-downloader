@@ -1,7 +1,7 @@
 # main_env.py - Main entry point with environment variable support
 
 import logging
-from integration import create_enhanced_application
+from src.integration import create_enhanced_application
 
 # Replace the existing main function
 def main():

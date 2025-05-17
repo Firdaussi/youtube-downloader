@@ -1,7 +1,5 @@
-# interfaces.py - Abstract interfaces using Python's Protocol
-
-from typing import Protocol, List, Optional, Dict, Any
-from models import DownloadConfig, HistoryEntry, DownloadProgress, PlaylistInfo
+from typing import Protocol, List, Optional
+from src.data.models import DownloadConfig, HistoryEntry, DownloadProgress, PlaylistInfo
 
 
 class ConfigurationRepository(Protocol):
