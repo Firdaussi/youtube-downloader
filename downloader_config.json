@@ -7,7 +7,7 @@
   "check_duplicates": true,
   "bandwidth_limit": "0",
   "cookie_method": "file",
-  "cookie_file": "/home/ian/Misc/Youtube/youtube-downloader/loader/cookies.firefox-private.txt",
+  "cookie_file": "/home/ian/Misc/Youtube/youtube-downloader/config/auth/cookies.firefox-private.txt",
   "output_template": "%(playlist_index)02d-%(title)s.%(ext)s",
   "create_playlist_folder": true,
   "sanitize_filenames": true,
