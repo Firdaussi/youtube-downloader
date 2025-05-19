@@ -1,59 +1,96 @@
-youtube-downloader/
-├── src/
-│   ├── __init__.py
-│   ├── core/                  # Core functionality
-│   │   ├── __init__.py
-│   │   ├── downloader.py      # Core download functionality
-│   │   ├── download_service.py # Orchestration service
-│   │   ├── interfaces.py      # Interfaces
-│   │   ├── queue_manager.py   # Queue management
-│   │   └── validators.py      # Validation utilities
-│   │
-│   ├── data/                  # Data handling
-│   │   ├── __init__.py
-│   │   ├── models.py          # Data models
-│   │   ├── repositories.py    # Data repositories
-│   │   └── env_config.py      # Environment configuration
-│   │
-│   ├── ui/                    # User interface
-│   │   ├── __init__.py
-│   │   ├── gui.py             # Main GUI implementation
-│   │   ├── presenters.py      # UI presenters
-│   │   ├── tabs/              # Tab implementations
-│   │   │   ├── __init__.py
-│   │   │   ├── download_tab.py
-│   │   │   ├── history_tab.py
-│   │   │   ├── settings_tab.py
-│   │   │   └── theme_tab.py
-│   │   └── theme/             # Theme implementations
-│   │       ├── __init__.py
-│   │       └── theme_manager.py
-│   │
-│   ├── utils/                 # Utility modules
-│   │   ├── __init__.py
-│   │   ├── path_utils.py      # Path handling
-│   │   ├── performance_utils.py # Performance optimizations
-│   │   ├── environment.py     # Environment handling
-│   │   └── logging_utils.py   # Logging setup
-│   │
-│   └── integration.py         # Integration utilities
-│
-├── bin/                       # Executable scripts
-│   └── youtube_downloader.py  # Main entry point script
-│
-├── tests/                     # Tests
-│   ├── __init__.py
-│   ├── test_downloader.py
-│   ├── test_path_utils.py
-│   └── ...
-│
-├── resources/                 # Non-code resources
-│   ├── themes/                # Theme definitions
-│   └── icons/                 # Application icons
-│
-├── docs/                      # Documentation
-│   └── README.md
-│
-├── setup.py                   # Package setup script
-├── requirements.txt           # Dependencies
-└── README.md                  # Project README
+.
+├── bin
+│   ├── logs
+│   │   └── youtube_downloader.log
+│   └── youtube_downloader.py
+├── config
+│   ├── auth
+│   │   └── cookies.firefox-private.txt
+│   ├── download_history.json
+│   ├── downloader_config.json
+│   ├── presets
+│   ├── requirements.txt
+│   └── themes.json
+├── docs
+│   └── README.md
+├── download_history.json
+├── downloader_config.json
+├── logs
+│   └── youtube_downloader.log
+├── setup.py
+├── src
+│   ├── __init__.py
+│   ├── __pycache__
+│   │   ├── __init__.cpython-310.pyc
+│   │   └── integration.cpython-310.pyc
+│   ├── core
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-310.pyc
+│   │   │   ├── download_service.cpython-310.pyc
+│   │   │   ├── downloader.cpython-310.pyc
+│   │   │   ├── interfaces.cpython-310.pyc
+│   │   │   ├── queue_manager.cpython-310.pyc
+│   │   │   └── validators.cpython-310.pyc
+│   │   ├── download_service.py
+│   │   ├── downloader.py
+│   │   ├── interfaces.py
+│   │   ├── queue_manager.py
+│   │   └── validators.py
+│   ├── data
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-310.pyc
+│   │   │   ├── env_config.cpython-310.pyc
+│   │   │   ├── models.cpython-310.pyc
+│   │   │   └── repositories.cpython-310.pyc
+│   │   ├── env_config.py
+│   │   ├── models.py
+│   │   └── repositories.py
+│   ├── integration.py
+│   ├── ui
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-310.pyc
+│   │   │   ├── base_tab.cpython-310.pyc
+│   │   │   ├── gui.cpython-310.pyc
+│   │   │   └── presenters.cpython-310.pyc
+│   │   ├── base_tab.py
+│   │   ├── gui.py
+│   │   ├── presenters.py
+│   │   ├── tabs
+│   │   │   ├── __init__.py
+│   │   │   ├── __pycache__
+│   │   │   │   ├── __init__.cpython-310.pyc
+│   │   │   │   ├── download_tab.cpython-310.pyc
+│   │   │   │   ├── history_tab.cpython-310.pyc
+│   │   │   │   ├── settings_tab.cpython-310.pyc
+│   │   │   │   └── theme_tab.cpython-310.pyc
+│   │   │   ├── download_tab.py
+│   │   │   ├── history_tab.py
+│   │   │   ├── settings_tab.py
+│   │   │   └── theme_tab.py
+│   │   └── theme
+│   │       ├── __init__.py
+│   │       ├── __pycache__
+│   │       │   ├── __init__.cpython-310.pyc
+│   │       │   └── theme_manager.cpython-310.pyc
+│   │       └── theme_manager.py
+│   └── utils
+│       ├── __init__.py
+│       ├── __pycache__
+│       │   ├── __init__.cpython-310.pyc
+│       │   ├── environment.cpython-310.pyc
+│       │   ├── logging_utils.cpython-310.pyc
+│       │   ├── path_utils.cpython-310.pyc
+│       │   └── performance_utils.cpython-310.pyc
+│       ├── environment.py
+│       ├── logging_utils.py
+│       ├── path_utils.py
+│       └── performance_utils.py
+├── structure.txt
+├── tests
+│   └── __init__.py
+└── themes.json
+
+22 directories, 71 files

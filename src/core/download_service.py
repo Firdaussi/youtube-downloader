@@ -66,26 +66,34 @@ class DownloadService:
         return True
     
     def stop_downloads(self) -> None:
-        """Stop all downloads"""
+        """Stop all downloads with extreme prejudice"""
         if not self.is_downloading:
             self.logger.debug("No active downloads to stop")
             return
             
-        self.logger.info("Stopping all downloads")
+        self.logger.info("Forcefully stopping all downloads")
         self.is_downloading = False
         
         # Cancel active downloads
-        for playlist_id, future in self.active_downloads.items():
+        for playlist_id, future in list(self.active_downloads.items()):
             self.logger.debug(f"Cancelling download for playlist: {playlist_id}")
             future.cancel()
         
+        # Force shutdown all executors
         if self.executor:
-            self.logger.debug("Shutting down executor")
-            self.executor.shutdown(wait=False)
+            self.logger.debug("Shutting down main executor")
+            self.executor.shutdown(wait=False, cancel_futures=True)  # Use cancel_futures if available (Python 3.9+)
             self.executor = None
         
+        # Force clear queue and state
+        self.download_queue.clear_all()
         self.active_downloads.clear()
-        self.logger.info("All downloads stopped")
+        
+        # If using yt-dlp directly, we should try to kill any of its processes too
+        # This might require storing process IDs/references somewhere
+        self.downloader.force_stop()  # We'll need to implement this
+        
+        self.logger.info("All downloads forcefully stopped")
     
     def pause_downloads(self) -> None:
         """Pause all active downloads"""
@@ -188,16 +196,26 @@ class DownloadService:
         self.logger.debug("Queue processor thread submitted")
     
     def _download_with_handling(self,
-                               playlist_id: str,
-                               config: DownloadConfig,
-                               progress_listener: Optional[ProgressListener] = None) -> None:
+                            playlist_id: str,
+                            config: DownloadConfig,
+                            progress_listener: Optional[ProgressListener] = None) -> None:
         """Download with error handling"""
         try:
+            # Check if we've been cancelled already
+            if not self.is_downloading:
+                self.logger.debug(f"Download cancelled before starting: {playlist_id}")
+                return
+                
             self.logger.debug(f"Starting download handler for playlist: {playlist_id}")
             
             # Call the downloader
             self.downloader.download(playlist_id, config, progress_listener)
             
+            # Check if we were cancelled during download
+            if not self.is_downloading:
+                self.logger.debug(f"Download was cancelled during execution: {playlist_id}")
+                return
+                
             # Mark as completed - ENSURE ALL DATA IS SERIALIZABLE
             completion_info = {
                 'status': 'completed', 
@@ -208,6 +226,11 @@ class DownloadService:
             self.logger.info(f"Download completed successfully: {playlist_id}")
             
         except Exception as e:
+            # Check if we were cancelled - don't mark as failed if cancelled
+            if not self.is_downloading:
+                self.logger.debug(f"Download was cancelled after exception: {playlist_id}")
+                return
+                
             error_msg = str(e)
             self.logger.error(f"Failed to download {playlist_id}: {error_msg}")
             
@@ -217,7 +240,7 @@ class DownloadService:
             # Notify progress listener
             if progress_listener:
                 progress_listener.on_download_error(playlist_id, error_msg)
-                
+                    
         finally:
             # Remove from active downloads
             if playlist_id in self.active_downloads:
@@ -225,11 +248,11 @@ class DownloadService:
                     del self.active_downloads[playlist_id]
                     self.logger.debug(f"Removed from active downloads: {playlist_id}")
                 except Exception as e:
-                    self.logger.warning(f"Error cleaning up active download: {e}")
-    
+                    self.logger.warning(f"Error cleaning up active download: {e}")  
+  
     def _on_all_downloads_complete(self, 
-                                  config: DownloadConfig,
-                                  progress_listener: Optional[ProgressListener] = None) -> None:
+                                config: DownloadConfig,
+                                progress_listener: Optional[ProgressListener] = None) -> None:
         """Handle completion of all downloads"""
         self.is_downloading = False
         
@@ -250,3 +273,7 @@ class DownloadService:
                 f"Downloads complete. Completed: {status['completed']}, "
                 f"Failed: {status['failed']}"
             )
+            
+            # Notify listener about all downloads completing
+            if progress_listener:
+                progress_listener.on_all_downloads_complete()

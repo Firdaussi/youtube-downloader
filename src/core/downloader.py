@@ -76,6 +76,21 @@ class YouTubePlaylistDownloader:
             if self.pause_requested:
                 self._handle_pause(playlist_id, progress_callback)
             
+        # Check for cancellation
+            if hasattr(self, '_force_cancel') and self._force_cancel:
+                self.logger.info(f"Download cancelled: {playlist_id}")
+                if progress_callback:
+                    progress_callback.on_progress(DownloadProgress(
+                        playlist_id=playlist_id,
+                        status=DownloadStatus.FAILED,
+                        progress=0,
+                        speed=0,
+                        eta=0,
+                        current_file="",
+                        message="Download cancelled"
+                    ))
+                return  # Exit early without raising exception
+
             try:
                 # Check for duplicates if enabled
                 if config.check_duplicates:
@@ -177,6 +192,40 @@ class YouTubePlaylistDownloader:
                 
                 time.sleep(2)  # Wait before retry
     
+    def force_stop(self) -> None:
+        """Forcefully stop any active downloads"""
+        self.logger.info("Force stopping any active yt-dlp processes")
+        
+        # Set a flag to track cancellation
+        self._force_cancel = True
+        
+        # Try to terminate any active subprocess
+        # yt-dlp usually spawns ffmpeg or other processes that need to be killed
+        try:
+            import psutil
+            import os
+            import signal
+            
+            # Get our process and its children
+            current_process = psutil.Process(os.getpid())
+            
+            # Look for yt-dlp or ffmpeg processes among the children
+            for child in current_process.children(recursive=True):
+                try:
+                    child_name = child.name().lower()
+                    if 'yt-dlp' in child_name or 'ffmpeg' in child_name or 'youtube-dl' in child_name:
+                        self.logger.info(f"Terminating child process: {child.pid} ({child_name})")
+                        child.terminate()
+                except:
+                    pass
+        except Exception as e:
+            self.logger.error(f"Error trying to terminate processes: {e}")
+        
+        # If the current download is active, we need to handle that
+        if self.current_download:
+            self.logger.info(f"Marking current download as cancelled: {self.current_download}")
+            self.current_download = None
+        
     def get_playlist_info(self, playlist_id: str) -> PlaylistInfo:
         """Get playlist metadata"""
         playlist_url = f"https://www.youtube.com/playlist?list={playlist_id}"
@@ -288,6 +337,11 @@ class YouTubePlaylistDownloader:
         # Add progress hook
         if progress_callback:
             def progress_hook(d):
+            # Add early cancellation check
+                if hasattr(self, '_force_cancel') and self._force_cancel:
+                    self.logger.debug("Progress hook detected cancellation")
+                    raise Exception("Download cancelled by user")
+            
                 try:
                     status = d.get('status', '')
                     filename = d.get('filename', 'unknown file')

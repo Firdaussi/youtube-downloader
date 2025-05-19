@@ -86,6 +86,10 @@ class ProgressListener(Protocol):
         """Called when a download encounters an error"""
         ...
 
+    def on_all_downloads_complete(self) -> None:
+        """Called when all downloads are complete"""
+        ...
+
 
 class QualityFormatter(Protocol):
     """Interface for format string generation"""

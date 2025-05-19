@@ -72,7 +72,11 @@ class DownloadPresenter(ProgressListener):
     def stop_downloads(self) -> None:
         """Stop downloads"""
         self.download_service.stop_downloads()
-        self._update_status("Downloads stopped")
+        self._update_status("Downloads cancelled")
+        
+        # Manually trigger UI reset since we're not going through the normal completion flow
+        if self.on_all_complete_callback:
+            self.on_all_complete_callback()
     
     def get_queue_status(self):
         """Get current queue status"""
@@ -105,6 +109,12 @@ class DownloadPresenter(ProgressListener):
         self.logger.info(message)
         if self.on_status_change_callback:
             self.on_status_change_callback(message)
+
+    def on_all_downloads_complete(self) -> None:
+        """Handle all downloads completion"""
+        self._update_status("All downloads completed")
+        if self.on_all_complete_callback:
+            self.on_all_complete_callback()
 
 
 class HistoryPresenter:

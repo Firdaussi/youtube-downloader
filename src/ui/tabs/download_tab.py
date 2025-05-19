@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, scrolledtext, filedialog
+from tkinter import ttk, scrolledtext, filedialog, messagebox  
 from typing import List
 
 from src.data.models import DownloadProgress, DownloadQuality
@@ -19,7 +19,8 @@ class DownloadTab(BaseTab):
         self.presenter.on_status_change_callback = self.update_status
         self.presenter.on_playlist_complete_callback = self.mark_playlist_complete
         self.presenter.on_playlist_failed_callback = self.mark_playlist_failed
-        
+        self.presenter.on_all_complete_callback = self.reset_ui  # Add this line
+
         # Variables
         self.config = self.presenter.load_config()
         self.quality_var = tk.StringVar(value=self.config.default_quality.value)
@@ -117,13 +118,19 @@ class DownloadTab(BaseTab):
         self.download_button.pack(side=tk.LEFT, padx=5)
         
         self.pause_button = tk.Button(button_frame, text="Pause", 
-                                     command=self.pause_downloads, state=tk.DISABLED)
+                                    command=self.pause_downloads, state=tk.DISABLED)
         self.pause_button.pack(side=tk.LEFT, padx=5)
+        
+        # Add Cancel button
+        self.cancel_button = tk.Button(button_frame, text="Cancel", 
+                                    command=self.cancel_downloads, state=tk.DISABLED,
+                                    bg="#FF5050", fg="white")
+        self.cancel_button.pack(side=tk.LEFT, padx=5)
         
         tk.Button(button_frame, text="Clear", command=self.clear_input).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Save List", command=self.save_playlist_list).pack(side=tk.LEFT, padx=5)
-        tk.Button(button_frame, text="Load List", command=self.load_playlist_list).pack(side=tk.LEFT, padx=5)
-    
+        tk.Button(button_frame, text="Load List", command=self.load_playlist_list).pack(side=tk.LEFT, padx=5)   
+
     def _create_progress_section(self, parent):
         """Create progress section"""
         progress_frame = tk.LabelFrame(parent, text="Progress", padx=10, pady=5)
@@ -159,6 +166,7 @@ class DownloadTab(BaseTab):
         if self.presenter.start_downloads(playlist_ids):
             self.download_button.config(state=tk.DISABLED)
             self.pause_button.config(state=tk.NORMAL)
+            self.cancel_button.config(state=tk.NORMAL)  # Enable Cancel button
             self.progress_bar.start()
     
     def pause_downloads(self):
@@ -169,6 +177,13 @@ class DownloadTab(BaseTab):
         else:
             self.presenter.resume_downloads()
             self.pause_button.config(text='Pause')
+
+    def cancel_downloads(self):
+        """Cancel all downloads"""
+        if tk.messagebox.askyesno("Cancel Downloads", "Are you sure you want to cancel all downloads?"):
+            self.presenter.stop_downloads()
+            self.reset_ui()
+            self.log("Downloads cancelled by user")
     
     def change_directory(self):
         """Change download directory"""
@@ -265,3 +280,12 @@ class DownloadTab(BaseTab):
         self.log_output.see(tk.END)
         self.log_output.configure(state=tk.DISABLED)
         self.update()
+
+    def reset_ui(self):
+        """Reset UI elements after download completion or cancellation"""
+        self.download_button.config(state=tk.NORMAL)
+        self.pause_button.config(state=tk.DISABLED, text="Pause")
+        self.cancel_button.config(state=tk.DISABLED)  # Disable Cancel button
+        self.progress_bar.stop()
+        self.status_label.config(text="Ready")
+        self.log("UI reset")
