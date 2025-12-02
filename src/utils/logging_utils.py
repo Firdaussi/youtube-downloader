@@ -5,11 +5,15 @@ import os
 from logging.handlers import RotatingFileHandler
 from typing import Optional
 
+# Flag to track if logging has been configured
+_logging_configured = False
+
 def setup_logging(logs_dir: str = "logs", 
                  log_level: str = "INFO", 
                  log_file: str = "youtube_downloader.log",
                  max_size_mb: int = 10,
-                 backup_count: int = 5) -> logging.Logger:
+                 backup_count: int = 5,
+                 force: bool = False) -> logging.Logger:
     """
     Configure application logging
     
@@ -19,10 +23,17 @@ def setup_logging(logs_dir: str = "logs",
         log_file: Name of the log file
         max_size_mb: Maximum size of log file in megabytes before rotation
         backup_count: Number of backup files to keep
+        force: Force reconfiguration even if already configured
         
     Returns:
         Configured logger instance
     """
+    global _logging_configured
+    
+    # If logging is already configured (e.g., by logging_config), don't reconfigure
+    if _logging_configured and not force:
+        return logging.getLogger()
+    
     # Create logs directory if it doesn't exist
     os.makedirs(logs_dir, exist_ok=True)
     
@@ -60,6 +71,8 @@ def setup_logging(logs_dir: str = "logs",
     
     # Log startup message
     root_logger.info(f"Logging configured with level {log_level} to {log_path}")
+    
+    _logging_configured = True
     
     return root_logger
 
