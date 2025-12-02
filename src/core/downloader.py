@@ -573,11 +573,23 @@ class YouTubePlaylistDownloader:
         self.logger.info(f"Using output template: {output_template}")
         
         # Prepare download options with improved settings
+        # Create a custom logger class that redirects yt-dlp output
+        outer_logger = self.logger  # Capture the logger from outer scope
+        
+        class QuietLogger:
+            def debug(self, msg):
+                pass  # Suppress debug messages
+            def warning(self, msg):
+                pass  # Suppress warnings
+            def error(self, msg):
+                outer_logger.error(f"yt-dlp error: {msg}")  # Use captured logger
+        
         ydl_opts = {
             'format': self.quality_formatter.get_format_string(
                 config.default_quality.value
             ),
-            'quiet': False,
+            'logger': QuietLogger(),  # Use custom logger to suppress output
+            'noprogress': False,  # Keep progress hooks enabled
             'noplaylist': False,
             'outtmpl': output_template,
             # Add more efficient options:
@@ -601,34 +613,13 @@ class YouTubePlaylistDownloader:
                     self.logger.debug("Progress hook detected cancellation")
                     raise Exception("Download cancelled by user")
                 
-                # Use throttling to reduce UI updates
-                current_time = time.time()
+                status = d.get('status', '')
+                filename = d.get('filename', 'unknown file')
+                current_file = os.path.basename(filename) if filename else 'unknown'
                 
-                # Only update UI every 0.5 seconds (or when status changes)
-                if (hasattr(self, '_last_progress_time') and 
-                    current_time - self._last_progress_time < 0.5 and
-                    d.get('status') == 'downloading'):
-                    return
-                
-                # Update last progress time
-                self._last_progress_time = current_time
-                
-                try:
-                    status = d.get('status', '')
-                    filename = d.get('filename', 'unknown file')
-                    
-                    # Create a safe version of current_file for display
-                    current_file = os.path.basename(filename) if filename else 'unknown'
-                    
-                    if status == 'downloading':
-                        # Safely calculate progress
-                        total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0) 
-                        downloaded_bytes = d.get('downloaded_bytes', 0)
-                        progress = (downloaded_bytes / total_bytes) * 100 if total_bytes else 0
-                        
-                        self._handle_progress(d, playlist_info.id, progress_callback)
-                        
-                    elif status == 'finished':
+                # Always process 'finished' and 'error' status immediately (no throttling)
+                if status == 'finished':
+                    try:
                         progress_update = DownloadProgress(
                             playlist_id=playlist_info.id,
                             status=DownloadStatus.DOWNLOADING,
@@ -639,8 +630,12 @@ class YouTubePlaylistDownloader:
                             message=f"Processing: {current_file}"
                         )
                         progress_callback.on_progress(progress_update)
-                        
-                    elif status == 'error':
+                    except Exception as hook_error:
+                        self.logger.error(f"Error in progress hook (finished): {hook_error}")
+                    return
+                    
+                elif status == 'error':
+                    try:
                         error_msg = d.get('error', 'Unknown error')
                         progress_update = DownloadProgress(
                             playlist_id=playlist_info.id,
@@ -652,10 +647,23 @@ class YouTubePlaylistDownloader:
                             message=f"Error: {error_msg}"
                         )
                         progress_callback.on_progress(progress_update)
-                        
-                except Exception as hook_error:
-                    self.logger.error(f"Error in progress hook: {hook_error}")
-                    # Don't crash on hook errors
+                    except Exception as hook_error:
+                        self.logger.error(f"Error in progress hook (error): {hook_error}")
+                    return
+                
+                # Throttle updates for 'downloading' status to avoid UI lag
+                if status == 'downloading':
+                    current_time = time.time()
+                    if (hasattr(self, '_last_progress_time') and 
+                        current_time - self._last_progress_time < 0.5):
+                        return
+                    
+                    self._last_progress_time = current_time
+                    
+                    try:
+                        self._handle_progress(d, playlist_info.id, progress_callback)
+                    except Exception as hook_error:
+                        self.logger.error(f"Error in progress hook (downloading): {hook_error}")
                     
             ydl_opts['progress_hooks'] = [progress_hook]
         
@@ -684,7 +692,7 @@ class YouTubePlaylistDownloader:
                     
                     # Proceed with download
                     result = ydl.download([playlist_info.url])
-                    
+                
                 self.logger.info(f"Download result: {result}")
                 
             except Exception as e:
@@ -705,11 +713,23 @@ class YouTubePlaylistDownloader:
         output_template = os.path.join(folder, config.output_template)
         
         # Prepare download options with minimal settings
+        # Create a custom logger class that redirects yt-dlp output
+        outer_logger = self.logger  # Capture the logger from outer scope
+        
+        class QuietLogger:
+            def debug(self, msg):
+                pass
+            def warning(self, msg):
+                pass
+            def error(self, msg):
+                outer_logger.error(f"yt-dlp error: {msg}")  # Use captured logger
+        
         ydl_opts = {
             'format': self.quality_formatter.get_format_string(
                 config.default_quality.value
             ),
-            'quiet': False,
+            'logger': QuietLogger(),  # Use custom logger to suppress output
+            'noprogress': False,  # Keep progress hooks enabled
             'noplaylist': False,
             'outtmpl': output_template,
             'ignoreerrors': True,  # Skip errors for quicker processing
@@ -722,26 +742,18 @@ class YouTubePlaylistDownloader:
         # Add progress hook with throttling
         if progress_callback:
             def progress_hook(d):
-                # Use throttling logic here (only update UI every 0.5 seconds)
-                current_time = time.time()
+                # Check for cancellation
+                if hasattr(self, '_force_cancel') and self._force_cancel:
+                    self.logger.debug("Progress hook detected cancellation")
+                    raise Exception("Download cancelled by user")
                 
-                # Only update every 0.5 seconds for downloading status
-                if (hasattr(self, '_last_progress_time') and 
-                    current_time - self._last_progress_time < 0.5 and
-                    d.get('status') == 'downloading'):
-                    return
+                status = d.get('status', '')
                 
-                # Update last progress time
-                self._last_progress_time = current_time
-                
-                try:
-                    status = d.get('status', '')
-                    filename = d.get('filename', 'unknown file')
-                    current_file = os.path.basename(filename) if filename else 'unknown'
-                    
-                    if status == 'downloading':
-                        self._handle_progress(d, playlist_info.id, progress_callback)
-                    elif status == 'finished':
+                # Always process 'finished' status immediately (no throttling)
+                if status == 'finished':
+                    try:
+                        filename = d.get('filename', 'unknown file')
+                        current_file = os.path.basename(filename) if filename else 'unknown'
                         progress_update = DownloadProgress(
                             playlist_id=playlist_info.id,
                             status=DownloadStatus.DOWNLOADING,
@@ -752,8 +764,23 @@ class YouTubePlaylistDownloader:
                             message=f"Processing: {current_file}"
                         )
                         progress_callback.on_progress(progress_update)
-                except Exception as hook_error:
-                    self.logger.error(f"Error in progress hook: {hook_error}")
+                    except Exception as hook_error:
+                        self.logger.error(f"Error in progress hook (finished): {hook_error}")
+                    return
+                
+                # Throttle updates for 'downloading' status to avoid UI lag
+                if status == 'downloading':
+                    current_time = time.time()
+                    if (hasattr(self, '_last_progress_time') and 
+                        current_time - self._last_progress_time < 0.5):
+                        return
+                    
+                    self._last_progress_time = current_time
+                    
+                    try:
+                        self._handle_progress(d, playlist_info.id, progress_callback)
+                    except Exception as hook_error:
+                        self.logger.error(f"Error in progress hook (downloading): {hook_error}")
                     
             ydl_opts['progress_hooks'] = [progress_hook]
         
@@ -778,29 +805,27 @@ class YouTubePlaylistDownloader:
     def _handle_progress(self, d: Dict[str, Any], playlist_id: str,
                         callback: ProgressListener) -> None:
         """Handle progress updates from yt-dlp with throttling"""
-        # Current time for throttling
-        current_time = time.time()
-        
-        # Only update UI every 0.5 seconds unless status changes
-        if hasattr(self, '_last_progress_time') and current_time - self._last_progress_time < 0.5:
-            # If status is 'finished', always update regardless of time
-            if d.get('status') != 'finished':
-                return
-        
-        # Update last progress time
-        self._last_progress_time = current_time
-        
         try:
             if d['status'] == 'downloading':
                 # Safe retrieval of values with fallbacks
                 total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
                 downloaded_bytes = d.get('downloaded_bytes', 0)
-                speed = d.get('speed', 0)
-                eta = d.get('eta', 0)
+                speed = d.get('speed') or 0
+                eta = d.get('eta') or 0
                 
+                # Only show progress if we have a reasonable total_bytes estimate
+                # yt-dlp often starts with wildly inaccurate estimates
                 progress = 0
-                if total_bytes > 0:
-                    progress = (downloaded_bytes / total_bytes) * 100
+                if total_bytes > 0 and downloaded_bytes > 0:
+                    # Ensure we have a meaningful download (> 1 MB downloaded or > 10%)
+                    if downloaded_bytes > 1048576 or (downloaded_bytes / total_bytes) > 0.1:
+                        raw_progress = (downloaded_bytes / total_bytes) * 100
+                        # If we're very close to done (>95%), show 99.9%
+                        # The 'finished' status will update to 100%
+                        if raw_progress >= 95:
+                            progress = 99.9
+                        else:
+                            progress = min(99.9, raw_progress)
                 
                 # Safely get filename
                 filename = "unknown.mp4"
@@ -810,12 +835,16 @@ class YouTubePlaylistDownloader:
                     except:
                         pass
                 
+                # Format speed safely
+                speed_val = int(speed) if speed else 0
+                eta_val = int(eta) if eta else 0
+                
                 progress_update = DownloadProgress(
                     playlist_id=playlist_id,
                     status=DownloadStatus.DOWNLOADING,
                     progress=progress,
-                    speed=speed,
-                    eta=eta,
+                    speed=speed_val,
+                    eta=eta_val,
                     current_file=filename,
                     message=f"Downloading: {filename}"
                 )

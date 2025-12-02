@@ -89,7 +89,7 @@ class DownloadTab(BaseTab):
     def _create_queue_section(self, parent):
         """Create queue display section - full width"""
         queue_frame = tk.LabelFrame(parent, text="Download Queue", padx=10, pady=5)
-        queue_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        queue_frame.pack(fill=tk.X, pady=(0, 10))  # Keep fill=X to not expand vertically
         
         # Top row: status label and buttons
         top_row = tk.Frame(queue_frame)
@@ -117,7 +117,7 @@ class DownloadTab(BaseTab):
         
         columns = ('playlist_id', 'name')
         self.queue_tree = ttk.Treeview(tree_frame, columns=columns, show='headings', 
-                                       height=12, style="Queue.Treeview")
+                                       height=10, style="Queue.Treeview")  # Increased back to 10 (was 12)
         
         self.queue_tree.heading('playlist_id', text='Playlist ID')
         self.queue_tree.heading('name', text='Name')
@@ -210,7 +210,7 @@ class DownloadTab(BaseTab):
     def _create_download_log_section(self, parent):
         """Create simplified download log section"""
         log_frame = tk.LabelFrame(parent, text="Download Progress", padx=10, pady=5)
-        log_frame.pack(fill=tk.BOTH, expand=True)
+        log_frame.pack(fill=tk.BOTH, expand=True)  # This will take remaining space
         
         # Create treeview for track progress
         tree_frame = tk.Frame(log_frame)
@@ -394,8 +394,9 @@ class DownloadTab(BaseTab):
             messagebox.showwarning("Empty Queue", "No playlists in queue")
             return
         
-        # Reset track counter
+        # Reset track counter and seen files
         self._track_counter = 0
+        self._seen_files = {}
         
         # Clear log tree
         self.log_tree.delete(*self.log_tree.get_children())
@@ -517,16 +518,34 @@ class DownloadTab(BaseTab):
                 # Update the current track label in Active Download section
                 self.current_track_label.config(text=filename)
                 
-                # Get current index - use a counter if not provided
+                # Use sequential numbering based on when we first see each file
                 if not hasattr(self, '_track_counter'):
                     self._track_counter = 0
+                if not hasattr(self, '_seen_files'):
+                    self._seen_files = {}
+                if not hasattr(self, '_last_file'):
+                    self._last_file = None
                 
-                current_index = progress.current_index if hasattr(progress, 'current_index') and progress.current_index else None
+                # Check if we've seen this file before
+                is_new_file = filename not in self._seen_files
                 
-                # If no index provided, increment our counter
-                if current_index is None:
+                if is_new_file:
+                    # New file - mark previous file as 100% complete
+                    if self._last_file and self._last_file in self._seen_files:
+                        prev_index = self._seen_files[self._last_file]
+                        # Find and update previous file to 100%
+                        for item in self.log_tree.get_children():
+                            values = self.log_tree.item(item, 'values')
+                            if len(values) > 1 and values[1] == self._last_file:
+                                self.log_tree.item(item, values=(prev_index, self._last_file, "100.0%"))
+                                break
+                    
+                    # Track this new file
                     self._track_counter += 1
-                    current_index = self._track_counter
+                    self._seen_files[filename] = self._track_counter
+                    self._last_file = filename
+                
+                current_index = self._seen_files[filename]
                 
                 # Try to find existing entry or add new one
                 found = False
@@ -534,16 +553,19 @@ class DownloadTab(BaseTab):
                     values = self.log_tree.item(item, 'values')
                     if len(values) > 1 and values[1] == filename:
                         # Update existing entry
-                        self.log_tree.item(item, values=(values[0], filename, f"{progress.progress:.1f}%"))
+                        # If progress is 95% or higher, show as 100% (file is essentially done)
+                        display_progress = "100.0%" if progress.progress >= 95 else f"{progress.progress:.1f}%"
+                        self.log_tree.item(item, values=(current_index, filename, display_progress))
                         found = True
                         break
                 
                 if not found:
                     # Add new entry
+                    display_progress = "100.0%" if progress.progress >= 95 else f"{progress.progress:.1f}%"
                     self.log_tree.insert('', 'end', values=(
                         current_index,
                         filename,
-                        f"{progress.progress:.1f}%"
+                        display_progress
                     ))
                     # Auto-scroll to bottom
                     children = self.log_tree.get_children()
@@ -561,6 +583,17 @@ class DownloadTab(BaseTab):
     
     def mark_playlist_complete(self, playlist_id: str):
         """Mark playlist as complete"""
+        # Mark the last file as 100% complete
+        if hasattr(self, '_last_file') and self._last_file and hasattr(self, '_seen_files'):
+            if self._last_file in self._seen_files:
+                last_index = self._seen_files[self._last_file]
+                # Find and update last file to 100%
+                for item in self.log_tree.get_children():
+                    values = self.log_tree.item(item, 'values')
+                    if len(values) > 1 and values[1] == self._last_file:
+                        self.log_tree.item(item, values=(last_index, self._last_file, "100.0%"))
+                        break
+        
         # Remove from queue
         self.playlist_queue = [(pid, name) for pid, name in self.playlist_queue if pid != playlist_id]
         
@@ -574,6 +607,12 @@ class DownloadTab(BaseTab):
         
         # Move to next playlist if available
         if self.playlist_queue:
+            # Reset counters for next playlist
+            self._track_counter = 0
+            self._seen_files = {}
+            # Clear the download progress log
+            self.log_tree.delete(*self.log_tree.get_children())
+            
             self.current_playlist = self.playlist_queue[0]
             self.update_active_download()
         else:
