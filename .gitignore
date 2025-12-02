@@ -176,6 +176,7 @@ cython_debug/
 # My stuff
 config/auth/cookies.firefox-private.txt
 .env
-bin/download_history.json
+download_history.json
 
 loader/
+

@@ -7,17 +7,20 @@ from src.utils.performance_utils import ProgressThrottler, Debouncer
 from src.ui.theme.theme_manager import ThemeManager
 from src.ui.tabs.theme_tab import ThemeTab
     
-# Import original components
-from src.data.repositories import JsonHistoryRepository
+# Import optimized repositories
+from src.data.repositories import OptimizedJsonHistoryRepository, JsonConfigurationRepository
 from src.data.env_config import EnvironmentConfigRepository
-from src.core.validators import YouTubeCookieValidator, FileNameSanitizer, QualityFormatter
+
+# Import optimized validators
+from src.core.validators import OptimizedYouTubeCookieValidator, FileNameSanitizer, QualityFormatter
     
 # Original imports
 from src.data.models import DownloadProgress
 from src.core.download_service import DownloadService
 from src.core.downloader import YouTubePlaylistDownloader
 from src.ui.presenters import DownloadPresenter, HistoryPresenter, SettingsPresenter
-from src.ui.gui import YouTubeDownloaderApp, DownloadTab
+from src.ui.gui import YouTubeDownloaderApp
+from src.ui.tabs.download_tab import DownloadTab
 from src.utils.logging_utils import get_logger
 
 # Create a module-specific logger
@@ -149,10 +152,11 @@ class EnhancedYouTubePlaylistDownloader(YouTubePlaylistDownloader):
         """Override to use centralized PathUtils"""
         return PathUtils.sanitize_path(filepath)
     
-    def get_playlist_info(self, playlist_id: str):
-        """Override to include better error handling"""
+    def get_playlist_info(self, playlist_id: str, minimal: bool = False):
+        """Override to include better error handling and minimal mode"""
         try:
-            return super().get_playlist_info(playlist_id)
+            # Use the minimal flag from the parent class's implementation
+            return super().get_playlist_info(playlist_id, minimal)
         except Exception as e:
             # Enhance error message with troubleshooting steps
             error_message = str(e)
@@ -169,6 +173,23 @@ class EnhancedYouTubePlaylistDownloader(YouTubePlaylistDownloader):
             else:
                 # Re-raise with original error
                 raise
+                
+    # Add quick_download method from the optimization
+    def download_quick(self, playlist_id: str, config, progress_callback=None):
+        """Optimized quick download with minimal checks"""
+        if hasattr(super(), 'download_quick'):
+            return super().download_quick(playlist_id, config, progress_callback)
+        
+        # Fallback implementation if the parent class doesn't have the quick download method
+        self.logger.info(f"Using fallback quick download implementation for {playlist_id}")
+        
+        # Set quick mode flag
+        config.quick_mode = True
+        config.skip_validation = True
+        config.skip_metadata = True
+        
+        # Use the regular download method with the optimized config
+        return self.download(playlist_id, config, progress_callback)
 
 
 def create_enhanced_application():
@@ -179,12 +200,14 @@ def create_enhanced_application():
     # Log startup
     logger.info("Starting Enhanced YouTube Playlist Downloader")
 
-    # Create repositories
+    # Create optimized repositories
     config_repository = EnvironmentConfigRepository()
-    history_repository = JsonHistoryRepository()
     
-    # Create validators and utilities
-    cookie_validator = YouTubeCookieValidator()
+    # Use optimized history repository with memory caching
+    history_repository = OptimizedJsonHistoryRepository()
+    
+    # Create optimized validators
+    cookie_validator = OptimizedYouTubeCookieValidator()
     filename_sanitizer = FileNameSanitizer()
     quality_formatter = QualityFormatter()
     
@@ -194,7 +217,7 @@ def create_enhanced_application():
         filename_sanitizer=filename_sanitizer,
         cookie_validator=cookie_validator,
         history_repository=history_repository,
-        logger=get_logger('Downloader')  # Use get_logger instead
+        logger=get_logger('Downloader')
     )
     
     # Create download service
@@ -202,7 +225,7 @@ def create_enhanced_application():
         downloader=youtube_downloader,
         history_repository=history_repository,
         cookie_validator=cookie_validator,
-        logger=get_logger('DownloadService')  # Use get_logger instead
+        logger=get_logger('DownloadService')
     )
     
     # Create presenters
@@ -210,7 +233,7 @@ def create_enhanced_application():
         download_service=download_service,
         config_repository=config_repository,
         history_repository=history_repository,
-        logger=get_logger('DownloadPresenter')  # Use get_logger instead
+        logger=get_logger('DownloadPresenter')
     )
     
     history_presenter = HistoryPresenter(

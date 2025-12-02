@@ -30,6 +30,14 @@ class SettingsTab(BaseTab):
         self.preferred_format_var = tk.StringVar(value=getattr(self.config, 'preferred_format', 'mp4'))
         self.use_postprocessing_var = tk.BooleanVar(value=getattr(self.config, 'use_postprocessing', True))
         
+        # Performance optimization variables
+        self.quick_mode_var = tk.BooleanVar(value=getattr(self.config, 'quick_mode', False))
+        self.skip_validation_var = tk.BooleanVar(value=getattr(self.config, 'skip_validation', False))
+        self.skip_metadata_var = tk.BooleanVar(value=getattr(self.config, 'skip_metadata', False))
+        self.throttle_progress_var = tk.BooleanVar(value=getattr(self.config, 'throttle_progress', True))
+        self.use_memory_cache_var = tk.BooleanVar(value=getattr(self.config, 'use_memory_cache', True))
+        self.parallel_downloads_var = tk.IntVar(value=getattr(self.config, 'parallel_downloads', 0))
+        
         # Default download directory
         self.default_download_dir = os.path.join(os.path.expanduser("~"), "Downloads", "YouTube")
         
@@ -59,6 +67,11 @@ class SettingsTab(BaseTab):
         self.advanced_tab = tk.Frame(self.settings_notebook)
         self.settings_notebook.add(self.advanced_tab, text="Advanced")
         self._create_advanced_section(self.advanced_tab)
+        
+        # Performance tab (new)
+        self.performance_tab = tk.Frame(self.settings_notebook)
+        self.settings_notebook.add(self.performance_tab, text="Performance")
+        self._create_performance_section(self.performance_tab)
         
         # Save button (common to all tabs)
         tk.Button(settings_frame, text="Save Settings", command=self.save_settings, 
@@ -230,7 +243,73 @@ class SettingsTab(BaseTab):
         duplicates_frame.pack(fill=tk.X, pady=5)
         tk.Checkbutton(duplicates_frame, text="Check for duplicate downloads", 
                        variable=self.check_duplicates_var).pack(anchor=tk.W)
+    
+    def _create_performance_section(self, parent):
+        """Create performance optimization settings section"""
+        performance_frame = tk.LabelFrame(parent, text="Performance Optimizations", padx=10, pady=5)
+        performance_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
+        # Quick mode
+        quick_frame = tk.Frame(performance_frame)
+        quick_frame.pack(fill=tk.X, pady=2)
+        quick_btn = tk.Checkbutton(quick_frame, text="Enable Quick Mode by default (skip validations when using Quick Download)", 
+                                  variable=self.quick_mode_var)
+        quick_btn.pack(anchor=tk.W)
+        
+        # Skip validation
+        validation_frame = tk.Frame(performance_frame)
+        validation_frame.pack(fill=tk.X, pady=2)
+        tk.Checkbutton(validation_frame, text="Skip cookie validation (faster but may cause errors)", 
+                      variable=self.skip_validation_var).pack(anchor=tk.W)
+        
+        # Skip metadata
+        metadata_frame = tk.Frame(performance_frame)
+        metadata_frame.pack(fill=tk.X, pady=2)
+        tk.Checkbutton(metadata_frame, text="Skip full metadata fetching (faster but less info)", 
+                      variable=self.skip_metadata_var).pack(anchor=tk.W)
+        
+        # Throttle progress
+        throttle_frame = tk.Frame(performance_frame)
+        throttle_frame.pack(fill=tk.X, pady=2)
+        tk.Checkbutton(throttle_frame, text="Throttle progress updates (reduces CPU usage)", 
+                      variable=self.throttle_progress_var).pack(anchor=tk.W)
+        
+        # Use memory cache
+        cache_frame = tk.Frame(performance_frame)
+        cache_frame.pack(fill=tk.X, pady=2)
+        tk.Checkbutton(cache_frame, text="Use memory caching (faster but uses more RAM)", 
+                      variable=self.use_memory_cache_var).pack(anchor=tk.W)
+        
+        # Parallel downloads slider
+        parallel_frame = tk.Frame(performance_frame)
+        parallel_frame.pack(fill=tk.X, pady=5)
+        
+        tk.Label(parallel_frame, text="Extra Parallel Downloads:").pack(side=tk.LEFT)
+        parallel_scale = tk.Scale(parallel_frame, from_=0, to=4, orient=tk.HORIZONTAL,
+                                variable=self.parallel_downloads_var, resolution=1, length=150)
+        parallel_scale.pack(side=tk.LEFT, padx=5)
+        
+        # Explanation
+        tk.Label(parallel_frame, text="(0 = use default, higher = faster but more resource usage)").pack(side=tk.LEFT, padx=5)
+        
+        # Performance tips
+        tips_frame = tk.LabelFrame(performance_frame, text="Performance Tips", padx=10, pady=5)
+        tips_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+        
+        tips_text = tk.Text(tips_frame, height=8, wrap=tk.WORD, bg="#f0f0f0")
+        tips_text.pack(fill=tk.BOTH, expand=True, pady=5)
+        tips_text.insert(1.0, 
+            "TIPS FOR BETTER PERFORMANCE:\n\n"
+            "- Use the QUICK DOWNLOAD button for fastest downloads\n"
+            "- Skip duplicate checking if you don't mind re-downloading files\n"
+            "- Enable memory caching for faster repeat operations\n"
+            "- Increase parallel downloads for better network utilization\n"
+            "- Throttling progress updates significantly reduces CPU usage\n"
+            "- Skip metadata fetching when you don't need playlist information\n\n"
+            "WARNING: Performance optimizations may cause unexpected behavior."
+        )
+        tips_text.config(state=tk.DISABLED)
+    
     def browse_cookie_file(self):
         """Browse for cookie file"""
         filename = filedialog.askopenfilename(
@@ -253,12 +332,12 @@ class SettingsTab(BaseTab):
         is_valid, errors = self.presenter.validate_cookies(method, file_path)
         
         if is_valid:
-            self.cookie_file_status.config(text="✔ Valid", fg="green")
+            self.cookie_file_status.config(text="✓ Valid", fg="green")
         else:
             if not file_path:
-                self.cookie_file_status.config(text="✖ Not selected", fg="red")
+                self.cookie_file_status.config(text="✗ Not selected", fg="red")
             else:
-                self.cookie_file_status.config(text="✖ Invalid", fg="red")
+                self.cookie_file_status.config(text="✗ Invalid", fg="red")
                 
     def browse_download_dir(self):
         """Browse for download directory"""
@@ -350,16 +429,27 @@ class SettingsTab(BaseTab):
         self.config.auto_retry_failed = self.auto_retry_var.get()
         self.config.check_duplicates = self.check_duplicates_var.get()
         
-        # New settings for output customization
+        # Output settings
         self.config.output_template = self.output_template_var.get()
         self.config.create_playlist_folder = self.create_playlist_folder_var.get()
         self.config.sanitize_filenames = self.sanitize_filenames_var.get()
         self.config.preferred_format = self.preferred_format_var.get()
         self.config.use_postprocessing = self.use_postprocessing_var.get()
         
+        # Performance settings
+        self.config.quick_mode = self.quick_mode_var.get()
+        self.config.skip_validation = self.skip_validation_var.get()
+        self.config.skip_metadata = self.skip_metadata_var.get()
+        self.config.throttle_progress = self.throttle_progress_var.get()
+        self.config.use_memory_cache = self.use_memory_cache_var.get()
+        self.config.parallel_downloads = self.parallel_downloads_var.get()
+        
+        # Validation should be skipped if quick mode is enabled
+        if self.config.quick_mode:
+            self.config.skip_validation = True
+        
         if self.presenter.save_config(self.config):
             messagebox.showinfo("Settings Saved", "All settings have been saved successfully")
         else:
             errors = self.presenter.cookie_validator.get_validation_errors()
             messagebox.showerror("Validation Error", "\n".join(errors))
-            

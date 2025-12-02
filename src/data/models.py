@@ -44,6 +44,41 @@ class DownloadConfig:
     # Format settings
     preferred_format: str = "mp4"
     use_postprocessing: bool = True
+    
+    # Performance optimization settings (new)
+    quick_mode: bool = False
+    skip_validation: bool = False
+    skip_metadata: bool = False
+    throttle_progress: bool = True
+    cache_lifetime: int = 3600  # Cache lifetime in seconds (1 hour)
+    use_memory_cache: bool = True
+    parallel_downloads: int = 0  # Additional parallel downloads (0 = use max_concurrent_downloads)
+    
+    def copy(self):
+        """Create a copy of the config"""
+        return DownloadConfig(
+            download_directory=self.download_directory,
+            max_concurrent_downloads=self.max_concurrent_downloads,
+            default_quality=self.default_quality,
+            retry_count=self.retry_count,
+            auto_retry_failed=self.auto_retry_failed,
+            check_duplicates=self.check_duplicates,
+            bandwidth_limit=self.bandwidth_limit,
+            cookie_method=self.cookie_method,
+            cookie_file=self.cookie_file,
+            output_template=self.output_template,
+            create_playlist_folder=self.create_playlist_folder,
+            sanitize_filenames=self.sanitize_filenames,
+            preferred_format=self.preferred_format,
+            use_postprocessing=self.use_postprocessing,
+            quick_mode=self.quick_mode,
+            skip_validation=self.skip_validation,
+            skip_metadata=self.skip_metadata,
+            throttle_progress=self.throttle_progress,
+            cache_lifetime=self.cache_lifetime,
+            use_memory_cache=self.use_memory_cache,
+            parallel_downloads=self.parallel_downloads
+        )
 
 
 @dataclass

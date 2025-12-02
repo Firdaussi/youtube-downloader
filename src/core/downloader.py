@@ -1,4 +1,4 @@
-# downloader_fixed.py - Fixed downloader implementation
+# downloader.py - Optimized downloader implementation
 
 import os
 import time
@@ -7,6 +7,8 @@ from yt_dlp import YoutubeDL
 import re
 from pathlib import Path
 from datetime import datetime
+import json
+import csv
 
 from src.data.models import (
     DownloadConfig, PlaylistInfo, DownloadProgress, 
@@ -31,6 +33,9 @@ class YouTubePlaylistDownloader:
         self.logger = logger
         self.pause_requested = False
         self.current_download = None
+        
+        # For progress throttling
+        self._last_progress_time = 0
     
     @staticmethod
     def sanitize_filepath(filepath):
@@ -72,11 +77,14 @@ class YouTubePlaylistDownloader:
         attempts = 0
         playlist_info = None
         
+        # Check if this is quick mode
+        quick_mode = getattr(config, 'quick_mode', False)
+        
         while attempts < config.retry_count:
             if self.pause_requested:
                 self._handle_pause(playlist_id, progress_callback)
             
-        # Check for cancellation
+            # Check for cancellation
             if hasattr(self, '_force_cancel') and self._force_cancel:
                 self.logger.info(f"Download cancelled: {playlist_id}")
                 if progress_callback:
@@ -92,17 +100,25 @@ class YouTubePlaylistDownloader:
                 return  # Exit early without raising exception
 
             try:
-                # Check for duplicates if enabled
-                if config.check_duplicates:
-                    existing = self.history_repository.find_by_playlist_id(playlist_id)
-                    if existing:
+                # Check for duplicates if enabled and not in quick mode
+                if config.check_duplicates and not quick_mode:
+                    # Use is_duplicate method if available
+                    if hasattr(self.history_repository, 'is_duplicate'):
+                        is_duplicate = self.history_repository.is_duplicate(playlist_id)
+                    else:
+                        # Fall back to old method
+                        existing = self.history_repository.find_by_playlist_id(playlist_id)
+                        is_duplicate = existing is not None
+                        
+                    if is_duplicate:
                         self.logger.info(f"Skipping duplicate: {playlist_id}")
                         if progress_callback:
                             progress_callback.on_download_complete(playlist_id)
                         return
                 
-                # Get playlist info
-                playlist_info = self.get_playlist_info(playlist_id)
+                # Get playlist info - use minimal mode if configured or in quick mode
+                skip_metadata = getattr(config, 'skip_metadata', False) or quick_mode
+                playlist_info = self.get_playlist_info(playlist_id, minimal=skip_metadata)
                 
                 # Create download directory
                 playlist_folder = self._create_playlist_folder(
@@ -110,8 +126,9 @@ class YouTubePlaylistDownloader:
                     playlist_info.title
                 )
                 
-                # Create marker file
-                self._create_marker_file(playlist_folder, playlist_id)
+                # Create marker file (only in normal mode)
+                if not quick_mode:
+                    self._create_marker_file(playlist_folder, playlist_id)
                 
                 # Download playlist
                 self._download_playlist(
@@ -191,6 +208,97 @@ class YouTubePlaylistDownloader:
                     raise
                 
                 time.sleep(2)  # Wait before retry
+
+
+    def download_quick(self, playlist_id: str, config: DownloadConfig,
+                    progress_callback: Optional[ProgressListener] = None) -> None:
+        """Optimized download method that still gets playlist title and artist info"""
+        self.current_download = playlist_id
+        
+        try:
+            # Skip duplicate checking, but we'll still fetch info for the title and metadata
+            playlist_url = f"https://www.youtube.com/playlist?list={playlist_id}"
+            
+            # Notify listener about download start
+            if progress_callback:
+                progress_callback.on_download_start(playlist_id)
+                progress_callback.on_progress(DownloadProgress(
+                    playlist_id=playlist_id,
+                    status=DownloadStatus.DOWNLOADING,
+                    progress=0,
+                    speed=0,
+                    eta=0,
+                    current_file="",
+                    message=f"Starting quick download for {playlist_id} (getting info)"
+                ))
+            
+            # Get minimal playlist info - enough to get the title and basic metadata
+            ydl_opts = {
+                'quiet': True,
+                'extract_flat': 'in_playlist',  # We need entry info for metadata
+                'skip_download': True,
+                'playlist_items': '0:10',  # Get info for first 10 videos at most for speed
+            }
+            
+            playlist_title = f"Playlist_{playlist_id}"  # Default fallback title
+            playlist_entries = []  # Default empty entries list
+            
+            try:
+                # Quick extraction for title and first few entries
+                with YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(playlist_url, download=False)
+                    if info:
+                        if 'title' in info:
+                            raw_title = info.get('title')
+                            # Sanitize the title
+                            playlist_title = self.filename_sanitizer._sanitize_filename_component(raw_title)
+                            self.logger.debug(f"Got playlist title: {playlist_title}")
+                        
+                        # Get entries for metadata
+                        if 'entries' in info:
+                            playlist_entries = info.get('entries', [])
+            except Exception as e:
+                # If title extraction fails, just use the ID
+                self.logger.warning(f"Couldn't get playlist info, using ID: {e}")
+            
+            # Create download directory with the title we got
+            download_folder = os.path.join(config.download_directory, playlist_title)
+            os.makedirs(download_folder, exist_ok=True)
+            
+            # Create a playlist info object with what we have
+            playlist_info = PlaylistInfo(
+                id=playlist_id,
+                title=playlist_title,
+                url=playlist_url,
+                total_tracks=len(playlist_entries),
+                entries=playlist_entries
+            )
+            
+            # Generate metadata files
+            self._generate_playlist_metadata_file(playlist_info, download_folder, config)
+            
+            # Download directly with optimized options
+            self._download_playlist_quick(playlist_info, download_folder, config, progress_callback)
+            
+            # Save to history in the background
+            try:
+                self.history_repository.save_entry({
+                    'playlist_id': playlist_id,
+                    'playlist_title': playlist_title,
+                    'status': 'completed',
+                    'timestamp': datetime.now().isoformat(),
+                    'download_path': download_folder
+                })
+            except Exception as e:
+                self.logger.error(f"Failed to save history: {e}")
+            
+            if progress_callback:
+                progress_callback.on_download_complete(playlist_id)
+                
+        except Exception as e:
+            if progress_callback:
+                progress_callback.on_download_error(playlist_id, str(e))
+            raise
     
     def force_stop(self) -> None:
         """Forcefully stop any active downloads"""
@@ -226,10 +334,21 @@ class YouTubePlaylistDownloader:
             self.logger.info(f"Marking current download as cancelled: {self.current_download}")
             self.current_download = None
         
-    def get_playlist_info(self, playlist_id: str) -> PlaylistInfo:
-        """Get playlist metadata"""
+    def get_playlist_info(self, playlist_id: str, minimal: bool = False) -> PlaylistInfo:
+        """Get playlist metadata with lazy fetching option"""
         playlist_url = f"https://www.youtube.com/playlist?list={playlist_id}"
         
+        if minimal:
+            # For quick downloads, don't fetch full metadata
+            return PlaylistInfo(
+                id=playlist_id,
+                title=f"Playlist_{playlist_id}",  # Use placeholder title
+                url=playlist_url,
+                total_tracks=0,  # Unknown without fetching
+                entries=[]  # No entries for minimal info
+            )
+        
+        # Original implementation for standard downloads
         ydl_opts = {
             'quiet': True,
             'extract_flat': 'in_playlist',
@@ -295,31 +414,165 @@ class YouTubePlaylistDownloader:
         with open(marker_path, 'w') as f:
             pass
     
+    def _generate_playlist_metadata_file(self, playlist_info: PlaylistInfo, folder_path: str, config: DownloadConfig) -> None:
+        """Generate a metadata file with playlist details and artist information"""
+        self.logger.info(f"Generating metadata file for playlist: {playlist_info.title}")
+        
+        try:
+            # Get more detailed information if not already available
+            detailed_info = playlist_info
+
+            # print(detailed_info)
+            
+            # If entries are empty or minimal, try to get more info
+            if not detailed_info.entries or len(detailed_info.entries) == 0:
+                try:
+                    # Try to get more detailed info but don't fail the whole download if it doesn't work
+                    ydl_opts = {
+                        'quiet': True,
+                        'extract_flat': 'in_playlist',
+                        'skip_download': True,
+                    }
+                    with YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(detailed_info.url, download=False)
+                        if info and 'entries' in info:
+                            detailed_info.entries = info.get('entries', [])
+                            # Update total tracks count
+                            detailed_info.total_tracks = len(detailed_info.entries)
+                except Exception as e:
+                    self.logger.warning(f"Could not get detailed playlist info for metadata: {e}")
+            
+            # Prepare metadata
+            metadata = {
+                "playlist_id": detailed_info.id,
+                "playlist_title": detailed_info.title,
+                "playlist_url": detailed_info.url,
+                "total_tracks": detailed_info.total_tracks,
+                "extraction_date": datetime.now().isoformat(),
+                "videos": []
+            }
+            
+            # Channel/uploader information (extracted from first video if available)
+            channel_info = {}
+            
+            # Process entries for artist/uploader info and video details
+            for i, entry in enumerate(detailed_info.entries):
+                video_info = {
+                    "position": i + 1,
+                    "title": entry.get('title', 'Unknown Title'),
+                    "id": entry.get('id', 'Unknown ID'),
+                    "url": f"https://www.youtube.com/watch?v={entry.get('id')}" 
+                        if entry.get('id') else 'Unknown URL'
+                }
+                
+                # Extract uploader/channel info
+                if 'channel' in entry:
+                    video_info['channel'] = entry.get('channel', 'Unknown Channel')
+                if 'uploader' in entry:
+                    video_info['uploader'] = entry.get('uploader', 'Unknown Uploader')
+                if 'uploader_id' in entry:
+                    video_info['uploader_id'] = entry.get('uploader_id', 'Unknown Uploader ID')
+                if 'channel_id' in entry:
+                    video_info['channel_id'] = entry.get('channel_id', 'Unknown Channel ID')
+                if 'channel_url' in entry:
+                    video_info['channel_url'] = entry.get('channel_url', '')
+                
+                # Get duration if available
+                if 'duration' in entry:
+                    duration = entry.get('duration')
+                    if duration:
+                        minutes, seconds = divmod(int(duration), 60)
+                        hours, minutes = divmod(minutes, 60)
+                        if hours > 0:
+                            video_info['duration'] = f"{hours}:{minutes:02d}:{seconds:02d}"
+                        else:
+                            video_info['duration'] = f"{minutes}:{seconds:02d}"
+                
+                # Add to videos list
+                metadata['videos'].append(video_info)
+                
+                # Capture channel info from first video if not already set
+                if not channel_info and i == 0:
+                    channel_info = {
+                        'channel': video_info.get('channel', 'Unknown Channel'),
+                        'uploader': video_info.get('uploader', 'Unknown Uploader'),
+                        'channel_id': video_info.get('channel_id', ''),
+                        'channel_url': video_info.get('channel_url', '')
+                    }
+            
+            # Add channel info to main metadata
+            metadata.update(channel_info)
+            
+            # Generate JSON metadata file
+            json_path = os.path.join(folder_path, "playlist_metadata.json")
+            with open(json_path, 'w', encoding='utf-8') as json_file:
+                json.dump(metadata, json_file, indent=2, ensure_ascii=False)
+            
+            # Generate CSV file for easy importing into other tools
+            csv_path = os.path.join(folder_path, "playlist_tracks.csv")
+            with open(csv_path, 'w', encoding='utf-8', newline='') as csv_file:
+                # Define CSV columns
+                fieldnames = ['position', 'title', 'id', 'url', 'channel', 'uploader', 'duration']
+                writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+                
+                writer.writeheader()
+                for video in metadata['videos']:
+                    # Create a row with only the fields we want in the CSV
+                    row = {field: video.get(field, '') for field in fieldnames if field in video}
+                    writer.writerow(row)
+            
+            # Create a simple README text file with basic info
+            readme_path = os.path.join(folder_path, "README.txt")
+            with open(readme_path, 'w', encoding='utf-8') as readme_file:
+                readme_file.write(f"Playlist: {detailed_info.title}\n")
+                readme_file.write(f"URL: {detailed_info.url}\n")
+                if 'channel' in channel_info:
+                    readme_file.write(f"Channel: {channel_info['channel']}\n")
+                if 'uploader' in channel_info:
+                    readme_file.write(f"Uploader: {channel_info['uploader']}\n")
+                if 'channel_url' in channel_info and channel_info['channel_url']:
+                    readme_file.write(f"Channel URL: {channel_info['channel_url']}\n")
+                readme_file.write(f"Total Tracks: {detailed_info.total_tracks}\n")
+                readme_file.write(f"Downloaded on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                readme_file.write("This folder contains:\n")
+                readme_file.write("- Video files downloaded from the playlist\n")
+                readme_file.write("- playlist_metadata.json: Complete playlist metadata in JSON format\n")
+                readme_file.write("- playlist_tracks.csv: Track listing in CSV format for importing\n")
+            
+            self.logger.info(f"Created metadata files in {folder_path}")
+            
+        except Exception as e:
+            # Don't fail the download if metadata generation fails
+            self.logger.error(f"Error generating metadata files: {e}")
+        
     def _download_playlist(self, playlist_info: PlaylistInfo, 
                         folder: str, config: DownloadConfig,
-                        progress_callback: Optional[ProgressListener]) -> None:
-        """Download the playlist"""
+                        progress_callback: Optional[ProgressListener] = None) -> None:
+        """Download the playlist with optimized options and generate metadata"""
         if progress_callback:
             progress_callback.on_download_start(playlist_info.id)
         
         # Ensure folder exists and all parent directories
         os.makedirs(folder, exist_ok=True)
         
+        # Generate metadata file before starting download
+        self._generate_playlist_metadata_file(playlist_info, folder, config)
+        
         output_template = os.path.join(folder, config.output_template)
 
-        # Verify template contains the folder path - Add this debugging check
+        # Verify template contains the folder path
         if folder not in output_template:
             self.logger.error(f"CRITICAL ERROR: Folder path missing from output template!")
             self.logger.error(f"Folder: {folder}")
             self.logger.error(f"Template: {output_template}")
-            # Even attempt to fix it directly
+            # Fix template directly
             output_template = os.path.normpath(folder + '/' + '%(playlist_index)02d-%(title)s.%(ext)s')
             self.logger.info(f"Attempting to fix template: {output_template}")
 
         # Log what we're doing
         self.logger.info(f"Using output template: {output_template}")
         
-        # Prepare download options with minimal settings
+        # Prepare download options with improved settings
         ydl_opts = {
             'format': self.quality_formatter.get_format_string(
                 config.default_quality.value
@@ -327,21 +580,39 @@ class YouTubePlaylistDownloader:
             'quiet': False,
             'noplaylist': False,
             'outtmpl': output_template,
-            #'restrictfilenames': True,  # This is important to avoid invalid characters
+            # Add more efficient options:
+            'merge_output_format': config.preferred_format,
+            'sleep_interval': 1,  # Sleep between requests to avoid rate limiting
+            'max_sleep_interval': 5,
+            'sleep_interval_requests': 3,
+            'ignoreerrors': config.auto_retry_failed,  # Skip errors if auto retry is enabled
+            'geo_bypass': True  # Try to bypass geo-restrictions
         }
-
+        
         # Add postprocessing if enabled
         if config.use_postprocessing:
             ydl_opts['merge_output_format'] = config.preferred_format
         
-        # Add progress hook
+        # Add progress hook with throttling
         if progress_callback:
             def progress_hook(d):
-            # Add early cancellation check
+                # Check for cancellation
                 if hasattr(self, '_force_cancel') and self._force_cancel:
                     self.logger.debug("Progress hook detected cancellation")
                     raise Exception("Download cancelled by user")
-            
+                
+                # Use throttling to reduce UI updates
+                current_time = time.time()
+                
+                # Only update UI every 0.5 seconds (or when status changes)
+                if (hasattr(self, '_last_progress_time') and 
+                    current_time - self._last_progress_time < 0.5 and
+                    d.get('status') == 'downloading'):
+                    return
+                
+                # Update last progress time
+                self._last_progress_time = current_time
+                
                 try:
                     status = d.get('status', '')
                     filename = d.get('filename', 'unknown file')
@@ -398,78 +669,127 @@ class YouTubePlaylistDownloader:
         # Download
         with YoutubeDL(ydl_opts) as ydl:
             try:
-                # First try to extract info only to verify URL works
-                try:
-                    self.logger.info(f"Extracting playlist info for {playlist_info.url}")
-                    ydl.extract_info(playlist_info.url, download=False)
-                except Exception as info_error:
-                    self.logger.error(f"Info extraction error: {info_error}")
-                    # Continue anyway - sometimes the info extraction fails but download works
-                
-                # Proceed with download
-                result = ydl.download([playlist_info.url])
+                # For quick mode, skip info extraction
+                if getattr(config, 'quick_mode', False) or getattr(config, 'skip_metadata', False):
+                    # Go directly to download
+                    result = ydl.download([playlist_info.url])
+                else:
+                    # First try to extract info only to verify URL works
+                    try:
+                        self.logger.info(f"Extracting playlist info for {playlist_info.url}")
+                        ydl.extract_info(playlist_info.url, download=False)
+                    except Exception as info_error:
+                        self.logger.error(f"Info extraction error: {info_error}")
+                        # Continue anyway - sometimes the info extraction fails but download works
+                    
+                    # Proceed with download
+                    result = ydl.download([playlist_info.url])
+                    
                 self.logger.info(f"Download result: {result}")
                 
             except Exception as e:
                 error_msg = str(e)
                 self.logger.error(f"Download error: {error_msg}")
-                
-                # Try to provide more helpful error information
-                if "'filepath'" in error_msg:
-                    self.logger.error(f"This is a filepath error '{config.download_directory}'. Check folder permissions and path length.")
-                    self.logger.error(f"Error Message: {error_msg}")
-                    self.logger.error(f"Attempted to use template: {config.output_template}")
-                    # Try to get the current filename being processed if available
-                    current_filename = "unknown"
-                    if 'progress_hooks' in ydl_opts and ydl_opts['progress_hooks']:
-                        # This is a best-effort attempt to get the current filename
-                        # It may not always work depending on when the error occurred
-                        hook_data = getattr(ydl_opts['progress_hooks'][0], 'last_data', {})
-                        current_filename = hook_data.get('filename', 'unknown')
-                    self.logger.error(f"Current file being downloaded: {current_filename}")
-                    
-                    # Try to test write permissions
-                    try:
-                        test_path = os.path.join(folder, "write_test.txt")
-                        with open(test_path, 'w') as f:
-                            f.write("test")
-                        os.remove(test_path)
-                        self.logger.info("Write permission test: PASSED")
-                    except Exception as perm_e:
-                        self.logger.error(f"Write permission error: {perm_e}")
-                        
-                    # Test with different file extensions
-                    for ext in ['.mp4', '.webm', '.mkv']:
-                        try:
-                            test_video_path = os.path.join(folder, f"test_video{ext}")
-                            with open(test_video_path, 'wb') as f:
-                                f.write(b'test')
-                            self.logger.info(f"Test file created successfully with extension: {ext}")
-                            os.remove(test_video_path)
-                        except Exception as test_e:
-                            self.logger.error(f"Failed to create test file with extension {ext}: {test_e}")
-                            
-                    # Test path components
-                    path_components = folder.split(os.path.sep)
-                    for i in range(1, len(path_components) + 1):
-                        test_path = os.path.sep.join(path_components[:i])
-                        if test_path:  # Skip empty path components
-                            try:
-                                if os.path.exists(test_path):
-                                    access_read = os.access(test_path, os.R_OK)
-                                    access_write = os.access(test_path, os.W_OK)
-                                    access_exec = os.access(test_path, os.X_OK)
-                                    self.logger.info(f"Path component {test_path}: exists={True}, read={access_read}, write={access_write}, execute={access_exec}")
-                                else:
-                                    self.logger.error(f"Path component does not exist: {test_path}")
-                            except Exception as path_e:
-                                self.logger.error(f"Error checking path component {test_path}: {path_e}")
-                
                 raise
 
+    def _download_playlist_quick(self, playlist_info: PlaylistInfo,
+                              folder: str, config: DownloadConfig,
+                              progress_callback: Optional[ProgressListener]) -> None:
+        """Optimized download implementation with minimal overhead"""
+        if progress_callback:
+            progress_callback.on_download_start(playlist_info.id)
+        
+        # Ensure folder exists
+        os.makedirs(folder, exist_ok=True)
+        
+        output_template = os.path.join(folder, config.output_template)
+        
+        # Prepare download options with minimal settings
+        ydl_opts = {
+            'format': self.quality_formatter.get_format_string(
+                config.default_quality.value
+            ),
+            'quiet': False,
+            'noplaylist': False,
+            'outtmpl': output_template,
+            'ignoreerrors': True,  # Skip errors for quicker processing
+            'merge_output_format': config.preferred_format,
+            'nocheckcertificate': True,  # Skip certificate validation
+            'geo_bypass': True,  # Try to bypass geo-restrictions
+            'sleep_interval': 0  # No sleep between requests
+        }
+
+        # Add progress hook with throttling
+        if progress_callback:
+            def progress_hook(d):
+                # Use throttling logic here (only update UI every 0.5 seconds)
+                current_time = time.time()
+                
+                # Only update every 0.5 seconds for downloading status
+                if (hasattr(self, '_last_progress_time') and 
+                    current_time - self._last_progress_time < 0.5 and
+                    d.get('status') == 'downloading'):
+                    return
+                
+                # Update last progress time
+                self._last_progress_time = current_time
+                
+                try:
+                    status = d.get('status', '')
+                    filename = d.get('filename', 'unknown file')
+                    current_file = os.path.basename(filename) if filename else 'unknown'
+                    
+                    if status == 'downloading':
+                        self._handle_progress(d, playlist_info.id, progress_callback)
+                    elif status == 'finished':
+                        progress_update = DownloadProgress(
+                            playlist_id=playlist_info.id,
+                            status=DownloadStatus.DOWNLOADING,
+                            progress=100,
+                            speed=0,
+                            eta=0,
+                            current_file=current_file,
+                            message=f"Processing: {current_file}"
+                        )
+                        progress_callback.on_progress(progress_update)
+                except Exception as hook_error:
+                    self.logger.error(f"Error in progress hook: {hook_error}")
+                    
+            ydl_opts['progress_hooks'] = [progress_hook]
+        
+        # Add cookies if configured, with minimal validation
+        if config.cookie_method != 'none' and config.cookie_method == 'file':
+            if config.cookie_file and os.path.exists(config.cookie_file):
+                ydl_opts['cookiefile'] = config.cookie_file
+        elif config.cookie_method != 'none':
+            # For browser cookies
+            ydl_opts['cookiesfrombrowser'] = (config.cookie_method, None, None, None)
+        
+        # Download
+        with YoutubeDL(ydl_opts) as ydl:
+            try:
+                # Go directly to download, skip extraction step
+                result = ydl.download([playlist_info.url])
+                self.logger.info(f"Quick download result: {result}")
+            except Exception as e:
+                self.logger.error(f"Download error: {e}")
+                raise
+    
     def _handle_progress(self, d: Dict[str, Any], playlist_id: str,
                         callback: ProgressListener) -> None:
-        """Handle progress updates from yt-dlp with improved error handling"""
+        """Handle progress updates from yt-dlp with throttling"""
+        # Current time for throttling
+        current_time = time.time()
+        
+        # Only update UI every 0.5 seconds unless status changes
+        if hasattr(self, '_last_progress_time') and current_time - self._last_progress_time < 0.5:
+            # If status is 'finished', always update regardless of time
+            if d.get('status') != 'finished':
+                return
+        
+        # Update last progress time
+        self._last_progress_time = current_time
+        
         try:
             if d['status'] == 'downloading':
                 # Safe retrieval of values with fallbacks
@@ -540,19 +860,6 @@ class YouTubePlaylistDownloader:
         except Exception as e:
             # Log the error but don't crash
             self.logger.error(f"Error in progress handler: {e}")
-            # Try to notify about the error
-            try:
-                callback.on_progress(DownloadProgress(
-                    playlist_id=playlist_id,
-                    status=DownloadStatus.DOWNLOADING,
-                    progress=0,
-                    speed=0,
-                    eta=0,
-                    current_file="",
-                    message=f"Progress update error: {str(e)}"
-                ))
-            except:
-                pass  # If even the error notification fails, just continue
     
     def _add_cookie_config(self, ydl_opts: Dict, config: DownloadConfig) -> None:
         """Add cookie configuration to yt-dlp options"""

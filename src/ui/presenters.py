@@ -1,6 +1,7 @@
 # presenters.py - Presenter layer for handling UI interactions
 
 import logging
+import time
 from typing import List, Optional, Callable
 
 from src.data.models import DownloadConfig, DownloadProgress, HistoryEntry
@@ -31,6 +32,10 @@ class DownloadPresenter(ProgressListener):
         self.on_playlist_complete_callback: Optional[Callable[[str], None]] = None
         self.on_playlist_failed_callback: Optional[Callable[[str, str], None]] = None
         self.on_all_complete_callback: Optional[Callable[[], None]] = None
+        
+        # Progress throttling
+        self._last_progress_update = {}  # Dict to track last update time per playlist
+        self._progress_throttle_interval = 0.25  # Update UI max 4 times per second
     
     def load_config(self) -> DownloadConfig:
         """Load configuration"""
@@ -50,7 +55,30 @@ class DownloadPresenter(ProgressListener):
         self._update_status("Starting downloads...")
         
         success = self.download_service.start_downloads(
-            playlist_ids, config, self
+            playlist_ids, config, self, quick_mode=False
+        )
+        
+        if not success:
+            self._update_status("Failed to start downloads. Check your settings.")
+            return False
+        
+        return True
+
+    def start_downloads_quick(self, playlist_ids: List[str], config: DownloadConfig) -> bool:
+        """Start downloading playlists with minimal checks"""
+        if not playlist_ids:
+            self._update_status("No playlist IDs provided")
+            return False
+        
+        # Ensure we're using quick mode settings
+        config.quick_mode = True
+        config.check_duplicates = False
+        
+        self._update_status("Starting quick downloads (minimal checks)...")
+        
+        # Use a special quick download method that skips checks
+        success = self.download_service.start_downloads(
+            playlist_ids, config, self, quick_mode=True
         )
         
         if not success:
@@ -84,8 +112,44 @@ class DownloadPresenter(ProgressListener):
     
     # ProgressListener implementation
     def on_progress(self, progress: DownloadProgress) -> None:
-        """Handle progress updates"""
-        if self.on_progress_callback:
+        """Handle progress updates with throttling"""
+        if not self.on_progress_callback:
+            return
+            
+        # Implement throttling for UI updates
+        current_time = time.time()
+        playlist_id = progress.playlist_id
+        
+        # Initialize if not exists
+        if playlist_id not in self._last_progress_update:
+            self._last_progress_update[playlist_id] = 0
+        
+        # Check if we should update UI based on time elapsed or status
+        should_update = False
+        
+        # Always update for non-downloading statuses
+        if progress.status.value != 'downloading':
+            should_update = True
+        # Always update for the first update
+        elif self._last_progress_update[playlist_id] == 0:
+            should_update = True
+        # Update based on time interval
+        elif current_time - self._last_progress_update[playlist_id] >= self._progress_throttle_interval:
+            should_update = True
+        # Update on significant progress changes (e.g., 5% jumps)
+        elif hasattr(self, '_last_progress_value') and abs(progress.progress - getattr(self, '_last_progress_value', {}).get(playlist_id, 0)) >= 5:
+            should_update = True
+        
+        # Update UI if needed
+        if should_update:
+            self._last_progress_update[playlist_id] = current_time
+            
+            # Track last progress value
+            if not hasattr(self, '_last_progress_value'):
+                self._last_progress_value = {}
+            self._last_progress_value[playlist_id] = progress.progress
+            
+            # Call UI callback
             self.on_progress_callback(progress)
     
     def on_download_start(self, playlist_id: str) -> None:
@@ -116,6 +180,31 @@ class DownloadPresenter(ProgressListener):
         if self.on_all_complete_callback:
             self.on_all_complete_callback()
 
+    def is_downloading(self) -> bool:
+        """
+        Check if downloads are currently active
+        
+        Returns:
+            bool: True if downloads are in progress, False otherwise
+        """
+        return self.download_service.is_downloading
+
+
+    def add_to_download_queue(self, playlist_ids: List[str]) -> bool:
+        """
+        Add playlists to the download queue
+        
+        This works whether downloads are currently running or not.
+        If downloads are running, the playlists will be picked up automatically
+        by the queue processor.
+        
+        Args:
+            playlist_ids: List of YouTube playlist IDs to add to the queue
+            
+        Returns:
+            bool: True if playlists were added successfully, False otherwise
+        """
+        return self.download_service.add_to_queue(playlist_ids)
 
 class HistoryPresenter:
     """Presenter for history tab functionality"""
@@ -171,8 +260,11 @@ class SettingsPresenter:
     
     def save_config(self, config: DownloadConfig) -> bool:
         """Save configuration"""
+        # Skip cookie validation for quick mode configs
+        skip_validation = getattr(config, 'skip_validation', False)
+        
         # Validate cookies before saving
-        if not self.cookie_validator.validate(config.cookie_method, config.cookie_file):
+        if not skip_validation and not self.cookie_validator.validate(config.cookie_method, config.cookie_file):
             self.logger.warning("Cookie validation failed")
             return False
         

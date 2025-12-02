@@ -32,35 +32,60 @@ class DownloadService:
         self.active_downloads: Dict[str, Future] = {}
         self.executor: Optional[ThreadPoolExecutor] = None
         self.is_downloading = False
+        self._processor_running = False
         
         self.logger.debug("Download service initialized")
     
     def start_downloads(self, 
                        playlist_ids: List[str], 
                        config: DownloadConfig,
-                       progress_listener: Optional[ProgressListener] = None) -> bool:
-        """Start downloading playlists"""
-        if self.is_downloading:
-            self.logger.warning("Download already in progress, ignoring request")
-            return False
+                       progress_listener: Optional[ProgressListener] = None,
+                       quick_mode: bool = False) -> bool:
+        """Start downloading playlists with optional quick mode"""
         
-        # Validate cookies first
-        if not self.cookie_validator.validate(config.cookie_method, config.cookie_file):
-            errors = self.cookie_validator.get_validation_errors()
-            self.logger.error(f"Cookie validation failed: {errors}")
-            return False
+        # If downloads are already running, just add to the queue
+        if self.is_downloading:
+            self.logger.info(f"Downloads already running, adding {len(playlist_ids)} playlist(s) to queue")
+            for playlist_id in playlist_ids:
+                self.download_queue.add_playlist(playlist_id)
+                self.logger.debug(f"Added playlist to existing queue: {playlist_id}")
+            return True
+        
+        # Skip cookie validation in quick mode or if explicitly configured
+        if not quick_mode and not getattr(config, 'skip_validation', False):
+            # Validate cookies with normal validation
+            if not self.cookie_validator.validate(config.cookie_method, config.cookie_file):
+                errors = self.cookie_validator.get_validation_errors()
+                self.logger.error(f"Cookie validation failed: {errors}")
+                return False
+        else:
+            # Minimal cookie validation for quick mode
+            if config.cookie_method == 'file' and config.cookie_file:
+                if not self.cookie_validator.validate(
+                    config.cookie_method, 
+                    config.cookie_file, 
+                    skip_for_quick_mode=True
+                ):
+                    self.logger.warning(f"Cookie quick-check failed, but continuing anyway")
         
         self.is_downloading = True
-        self.logger.info(f"Starting downloads for {len(playlist_ids)} playlists")
+        self.logger.info(f"Starting {'quick ' if quick_mode else ''}downloads for {len(playlist_ids)} playlists")
         
         # Add playlists to queue
         for playlist_id in playlist_ids:
             self.download_queue.add_playlist(playlist_id)
             self.logger.debug(f"Added playlist to queue: {playlist_id}")
         
-        # Start processing queue
-        self.executor = ThreadPoolExecutor(max_workers=config.max_concurrent_downloads)
-        self.logger.info(f"Created thread pool with {config.max_concurrent_downloads} workers")
+        # Start processing queue with potentially different concurrency
+        max_workers = config.max_concurrent_downloads
+        
+        # If quick mode or parallel_downloads is set, use higher concurrency
+        if quick_mode or config.parallel_downloads > 0:
+            additional_workers = config.parallel_downloads if config.parallel_downloads > 0 else 2
+            max_workers = min(config.max_concurrent_downloads + additional_workers, 8)
+            
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.logger.info(f"Created thread pool with {max_workers} workers")
         self._process_queue(config, progress_listener)
         
         return True
@@ -94,6 +119,18 @@ class DownloadService:
         self.downloader.force_stop()  # We'll need to implement this
         
         self.logger.info("All downloads forcefully stopped")
+    
+    def add_to_queue(self, playlist_ids: List[str]) -> bool:
+        """Add playlists to the queue (works whether downloading or not)"""
+        if not playlist_ids:
+            return False
+            
+        for playlist_id in playlist_ids:
+            self.download_queue.add_playlist(playlist_id)
+            self.logger.debug(f"Added playlist to queue: {playlist_id}")
+        
+        self.logger.info(f"Added {len(playlist_ids)} playlist(s) to queue")
+        return True
     
     def pause_downloads(self) -> None:
         """Pause all active downloads"""
@@ -134,61 +171,98 @@ class DownloadService:
     def _process_queue(self, 
                       config: DownloadConfig,
                       progress_listener: Optional[ProgressListener] = None) -> None:
-        """Process downloads from the queue"""
-        self.logger.debug("Starting queue processor")
+        """Process downloads from the queue with optimized thread management"""
+        self.logger.debug("Starting optimized queue processor")
         
-        # Start a background thread to process the queue
+        # Start background processor only if not already running
+        if self._processor_running:
+            self.logger.debug("Queue processor already running")
+            return
+            
+        self._processor_running = True
+        
+        # Define a more efficient queue processor that better handles concurrency
         def queue_processor():
             try:
                 self.logger.debug("Queue processor thread started")
+                
+                # Track active downloads more efficiently
+                active_download_count = 0
+                pending_futures = {}  # Map of playlist_id to Future
+                
                 while self.is_downloading:
-                    # Get next playlist from queue
-                    next_item = self.download_queue.get_next()
-                    if not next_item:
-                        # Check if there are still active downloads
-                        if not self.active_downloads:
-                            self.logger.info("Queue empty and no active downloads, completing")
+                    completed_futures = []
+                    
+                    # Check for completed downloads
+                    for playlist_id, future in list(pending_futures.items()):
+                        if future.done():
+                            completed_futures.append(playlist_id)
+                            active_download_count -= 1
+                            
+                            # Process completion or error
+                            try:
+                                future.result()  # This will raise any exceptions from the download
+                            except Exception as e:
+                                self.logger.error(f"Download failed for {playlist_id}: {e}")
+                    
+                    # Remove completed downloads from tracking
+                    for playlist_id in completed_futures:
+                        del pending_futures[playlist_id]
+                    
+                    # Start new downloads if we have capacity
+                    while (active_download_count < config.max_concurrent_downloads and 
+                           self.is_downloading):
+                        
+                        # Get next playlist from queue
+                        next_item = self.download_queue.get_next()
+                        if not next_item:
+                            break  # No more items in queue
+                        
+                        # Start download
+                        playlist_id = next_item.playlist_id
+                        self.logger.info(f"Starting download for playlist: {playlist_id}")
+                        
+                        # Submit task with correct configuration based on mode
+                        use_quick_mode = getattr(config, 'quick_mode', False)
+                        
+                        if use_quick_mode and hasattr(self.downloader, 'download_quick'):
+                            # Use optimized quick download if available
+                            future = self.executor.submit(
+                                self.downloader.download_quick,
+                                playlist_id,
+                                config,
+                                progress_listener
+                            )
+                        else:
+                            # Use standard download method
+                            future = self.executor.submit(
+                                self._download_with_handling,
+                                playlist_id,
+                                config,
+                                progress_listener
+                            )
+                        
+                        # Track download
+                        pending_futures[playlist_id] = future
+                        active_download_count += 1
+                    
+                    # Check if we're done
+                    if active_download_count == 0 and self.download_queue.pending_count == 0:
+                        if self.is_downloading:
+                            self.logger.info("All downloads completed")
                             self._on_all_downloads_complete(config, progress_listener)
                             break
-                        # Wait for active downloads to complete
-                        time.sleep(1)
-                        continue
                     
-                    # Wait if we're at max concurrent downloads
-                    while (len(self.active_downloads) >= config.max_concurrent_downloads and 
-                           self.is_downloading):
-                        # Remove completed downloads
-                        completed_ids = []
-                        for playlist_id, future in list(self.active_downloads.items()):
-                            if future.done():
-                                self.logger.debug(f"Download completed: {playlist_id}")
-                                completed_ids.append(playlist_id)
-                        
-                        for playlist_id in completed_ids:
-                            del self.active_downloads[playlist_id]
-                        
-                        if len(self.active_downloads) >= config.max_concurrent_downloads:
-                            time.sleep(0.5)
+                    # Prevent busy-waiting with a small sleep
+                    time.sleep(0.1)
                     
-                    # Break loop if downloads were stopped
-                    if not self.is_downloading:
-                        self.logger.debug("Download stopped, breaking queue processor loop")
-                        break
+                self._processor_running = False
+                self.logger.debug("Queue processor thread finished")
                     
-                    # Start download
-                    playlist_id = next_item.playlist_id
-                    self.logger.info(f"Starting download for playlist: {playlist_id}")
-                    future = self.executor.submit(
-                        self._download_with_handling,
-                        playlist_id,
-                        config,
-                        progress_listener
-                    )
-                    self.active_downloads[playlist_id] = future
-            
             except Exception as e:
                 self.logger.error(f"Error in queue processor: {e}", exc_info=True)
                 self.is_downloading = False
+                self._processor_running = False
         
         # Start queue processor in a separate thread
         processor_thread = ThreadPoolExecutor(max_workers=1)
@@ -207,6 +281,22 @@ class DownloadService:
                 return
                 
             self.logger.debug(f"Starting download handler for playlist: {playlist_id}")
+            
+            # Check for duplicates if enabled and not in quick mode
+            if config.check_duplicates and not getattr(config, 'quick_mode', False):
+                # Use is_duplicate method if available (optimized)
+                if hasattr(self.history_repository, 'is_duplicate'):
+                    is_duplicate = self.history_repository.is_duplicate(playlist_id)
+                else:
+                    # Fall back to old method
+                    existing = self.history_repository.find_by_playlist_id(playlist_id)
+                    is_duplicate = existing is not None
+                    
+                if is_duplicate:
+                    self.logger.info(f"Skipping duplicate: {playlist_id}")
+                    if progress_listener:
+                        progress_listener.on_download_complete(playlist_id)
+                    return
             
             # Call the downloader
             self.downloader.download(playlist_id, config, progress_listener)
