@@ -280,8 +280,8 @@ class FileNameSanitizer:
             
     def _sanitize_filename_component(self, component: str) -> str:
         """Sanitize a single filename component (not a path)"""
-        # Remove invalid characters, but NOT path separators
-        invalid_chars = r'\\*?:"<>|'  # Note: removed / from the invalid chars list
+        # Remove invalid characters including forward slash (to prevent subdirectories)
+        invalid_chars = r'\/*?:"<>|'  # Added / to prevent subdirectory creation
         sanitized = re.sub(f'[{re.escape(invalid_chars)}]', "_", component)
         
         # Remove leading/trailing whitespace and dots
@@ -290,11 +290,26 @@ class FileNameSanitizer:
         # Replace multiple spaces with single space
         sanitized = re.sub(r'\s+', ' ', sanitized)
         
-        # Limit length
-        if len(sanitized) > 200:
-            name, ext = os.path.splitext(sanitized)
-            max_name_length = 200 - len(ext)
-            sanitized = name[:max_name_length] + ext
+        # Limit length - use 100 chars for directories/filenames
+        max_length = 100
+        if len(sanitized) > max_length:
+            # Try to find a word boundary (space, dash, underscore) near the limit
+            # Look backwards from max_length to find a good break point
+            break_chars = [' ', '-', '_', '·', '–', '—']
+            best_break = None
+            
+            # Search backwards from max_length, looking for a word boundary
+            for i in range(max_length, max(max_length - 30, 0), -1):
+                if i < len(sanitized) and sanitized[i] in break_chars:
+                    best_break = i
+                    break
+            
+            if best_break:
+                # Break at word boundary and clean up trailing punctuation
+                sanitized = sanitized[:best_break].rstrip(' -_·–—')
+            else:
+                # No word boundary found, just truncate at max_length
+                sanitized = sanitized[:max_length].rstrip()
             
         # Ensure filename is not empty
         if not sanitized:
