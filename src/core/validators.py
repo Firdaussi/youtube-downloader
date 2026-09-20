@@ -325,12 +325,12 @@ class QualityFormatter:
         # Get class-specific logger
         self.logger = get_logger(f"{__name__}.QualityFormatter")
         
+        # SIMPLIFIED format strings that work with Android client
         self.format_strings = {
-            # More flexible format strings that don't require specific codecs
-            'best': 'bestvideo+bestaudio/best',
-            '1080p': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
-            '720p': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
-            '480p': 'bestvideo[height<=480]+bestaudio/best[height<=480]/best',
+            'best': 'best',  # Just get the best available
+            '1080p': 'best[height<=1080]',
+            '720p': 'best[height<=720]',
+            '480p': 'best[height<=480]',
             'audio_only': 'bestaudio/best'
         }
         
@@ -350,17 +350,17 @@ class QualityFormatter:
             return self._custom_format_cache[quality]
             
         # Generate custom format string
-        # Basic pattern: match resolution and get best audio
         custom_format = None
         
         # Try to interpret quality as a resolution
         resolution_match = re.match(r'(\d+)p', quality)
         if resolution_match:
             height = resolution_match.group(1)
-            custom_format = f'bestvideo[height<={height}]+bestaudio/best[height<={height}]/best'
+            custom_format = f'best[height<={height}]'
             self._custom_format_cache[quality] = custom_format
             return custom_format
             
         # Fallback to best if no match
         self.logger.warning(f"Unknown quality '{quality}', using 'best' instead")
-        return self.format_strings['best']
+        return 'best'
+        

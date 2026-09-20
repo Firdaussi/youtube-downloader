@@ -38,6 +38,8 @@ class DownloadConfig:
     
     # Output settings
     output_template: str = "%(playlist_index)02d-%(title)s.%(ext)s"
+    single_video_template: str = "%(title)s.%(ext)s"  # NEW: Template for single videos
+    singles_folder_name: str = "Singles"  # NEW: Folder name for single videos
     create_playlist_folder: bool = True
     sanitize_filenames: bool = True
     
@@ -67,6 +69,8 @@ class DownloadConfig:
             cookie_method=self.cookie_method,
             cookie_file=self.cookie_file,
             output_template=self.output_template,
+            single_video_template=self.single_video_template,  # NEW
+            singles_folder_name=self.singles_folder_name,  # NEW
             create_playlist_folder=self.create_playlist_folder,
             sanitize_filenames=self.sanitize_filenames,
             preferred_format=self.preferred_format,

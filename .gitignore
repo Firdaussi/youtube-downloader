@@ -180,3 +180,4 @@ download_history.json
 
 loader/
 
+*.txt

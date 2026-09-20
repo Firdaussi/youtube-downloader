@@ -68,7 +68,7 @@ class DownloadTab(BaseTab):
         top_row.pack(fill=tk.X, pady=(0, 5))
         
         help_text = tk.Label(top_row, 
-                            text="Paste playlist IDs or URLs (one per line)",
+                            text="Paste playlist IDs/URLs or single video URLs (one per line)",
                             font=("Segoe UI", 9),
                             fg="gray",
                             anchor=tk.W)
@@ -235,7 +235,7 @@ class DownloadTab(BaseTab):
     
     # Queue management methods
     def extract_playlist_id(self, text: str) -> Optional[str]:
-        """Extract playlist ID from URL or return the text if it's already an ID"""
+        """Extract playlist ID or video ID from URL or return the text if it's already an ID"""
         text = text.strip()
         if not text:
             return None
@@ -246,43 +246,103 @@ class DownloadTab(BaseTab):
                 parsed = urlparse(text)
                 params = parse_qs(parsed.query)
                 
-                if 'list' in params:
+                # Check for video parameter first (single videos are more common)
+                # If there's both v= and list=, we prefer the video unless list= is a real playlist (PL, UU, etc.)
+                if 'v' in params:
+                    video_id = params['v'][0]
+                    # Check if there's also a list parameter
+                    if 'list' in params:
+                        list_id = params['list'][0]
+                        # Only use the list if it's a real playlist (not auto-generated RD/RDMM)
+                        if list_id.startswith(('PL', 'UU', 'FL', 'OL')):
+                            return list_id
+                    # No real playlist, return the video ID
+                    return video_id
+                # No video parameter, check for playlist parameter
+                elif 'list' in params:
                     return params['list'][0]
+                # Check for youtu.be short URLs
+                elif 'youtu.be' in parsed.netloc:
+                    # Extract video ID from path (e.g., youtu.be/VIDEO_ID)
+                    video_id = parsed.path.strip('/')
+                    if video_id:
+                        return video_id
                 else:
-                    self.logger.warning(f"No 'list' parameter found in URL: {text}")
+                    self.logger.warning(f"No 'list' or 'v' parameter found in URL: {text}")
                     return None
             except Exception as e:
                 self.logger.error(f"Error parsing URL '{text}': {e}")
                 return None
         else:
-            # Assume it's already a playlist ID
+            # Assume it's already a playlist ID or video ID
             return text
     
     def fetch_playlist_name(self, playlist_id: str) -> str:
-        """Fetch playlist name using yt-dlp (runs in background)"""
+        """Fetch playlist name or video title using yt-dlp (runs in background)"""
         try:
             import yt_dlp
+            
+            # Determine if this is a single video or playlist using the same logic as downloader
+            is_single = False
+            if len(playlist_id) == 11:
+                # 11 characters = video ID
+                is_single = True
+            elif playlist_id.startswith(('PL', 'UU', 'FL', 'OL')):
+                # These prefixes indicate playlists (removed RD as it can be auto-generated mixes)
+                is_single = False
+            else:
+                # Ambiguous - default to video for shorter IDs
+                is_single = len(playlist_id) <= 15
+            
+            self.logger.info(f"Fetching name for {'video' if is_single else 'playlist'}: {playlist_id}")
             
             ydl_opts = {
                 'quiet': True,
                 'no_warnings': True,
-                'extract_flat': True,
+                'skip_download': True,
             }
+            
+            # For playlists, use extract_flat. For videos, force single video extraction
+            if is_single:
+                # Force yt-dlp to treat this as a single video, not a playlist
+                ydl_opts['noplaylist'] = True
+                ydl_opts['extract_flat'] = False
+            else:
+                ydl_opts['extract_flat'] = True
             
             # Add cookies if configured
             if self.config.cookie_method != 'none':
                 if self.config.cookie_method == 'file':
-                    ydl_opts['cookiefile'] = self.config.cookie_file
+                    if self.config.cookie_file:
+                        ydl_opts['cookiefile'] = self.config.cookie_file
                 else:
                     ydl_opts['cookiesfrombrowser'] = (self.config.cookie_method,)
             
+            if is_single:
+                # It's a single video
+                url = f"https://www.youtube.com/watch?v={playlist_id}"
+            else:
+                # It's a playlist
+                url = f"https://www.youtube.com/playlist?list={playlist_id}"
+            
+            self.logger.info(f"Fetching from URL: {url} (is_single={is_single})")
+            
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(f"https://www.youtube.com/playlist?list={playlist_id}", download=False)
-                return info.get('title', 'Unknown Playlist')
+                info = ydl.extract_info(url, download=False)
+                
+                if info:
+                    title = info.get('title', 'Unknown')
+                    self.logger.info(f"Successfully fetched title: {title}")
+                    return title
+                else:
+                    self.logger.warning(f"No info returned for {playlist_id}")
+                    return "Unknown"
                 
         except Exception as e:
-            self.logger.error(f"Error fetching playlist name for {playlist_id}: {e}")
-            return "Unknown Playlist"
+            import traceback
+            self.logger.error(f"Error fetching name for {playlist_id}: {e}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            return f"Error: {str(e)[:30]}..."
     
     def add_to_queue(self):
         """Add playlists from input to queue"""
@@ -383,8 +443,8 @@ class DownloadTab(BaseTab):
         )
         if filename:
             with open(filename, 'w') as f:
-                for playlist_id, name in self.playlist_queue:
-                    f.write(f"{playlist_id}\t{name}\n")
+                for playlist_id in self.playlist_queue:
+                    f.write(f"{playlist_id}\n")
             self.logger.info(f"Saved queue to {filename}")
     
     # Download control methods
