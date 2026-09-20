@@ -70,6 +70,110 @@ class YouTubePlaylistDownloader:
         
         return sanitized_path
     
+    @staticmethod
+    def is_single_video_url(url_or_id: str) -> bool:
+        """
+        Check if the URL or ID represents a single video rather than a playlist.
+        
+        Args:
+            url_or_id: Either a full YouTube URL or just a video/playlist ID
+            
+        Returns:
+            True if it's a single video, False if it's a playlist
+        """
+        # If it's a full URL, check for video indicators
+        if 'youtube.com' in url_or_id or 'youtu.be' in url_or_id:
+            # Single video patterns
+            if '/watch?' in url_or_id and 'v=' in url_or_id:
+                # Make sure it doesn't also have a playlist parameter
+                if 'list=' not in url_or_id:
+                    return True
+            if 'youtu.be/' in url_or_id:
+                return True
+            return False
+        
+        # If it's just an ID, check the format
+        # YouTube video IDs are 11 characters
+        # Playlist IDs typically start with 'PL' or 'UU' and are longer
+        if len(url_or_id) == 11:
+            return True
+        if url_or_id.startswith(('PL', 'UU', 'FL', 'RD')):
+            return False
+        
+        # Default to treating as playlist for safety
+        return False
+    
+    @staticmethod
+    def extract_video_id(url_or_id: str) -> str:
+        """
+        Extract the video ID from a YouTube URL or return the ID if already extracted.
+        
+        Args:
+            url_or_id: Either a full YouTube URL or just a video ID
+            
+        Returns:
+            The 11-character video ID
+        """
+        # If it's already just an ID (11 characters), return it
+        if len(url_or_id) == 11 and 'youtube.com' not in url_or_id:
+            return url_or_id
+        
+        # Extract from various URL formats
+        # Format: https://www.youtube.com/watch?v=VIDEO_ID
+        match = re.search(r'[?&]v=([a-zA-Z0-9_-]{11})', url_or_id)
+        if match:
+            return match.group(1)
+        
+        # Format: https://youtu.be/VIDEO_ID
+        match = re.search(r'youtu\.be/([a-zA-Z0-9_-]{11})', url_or_id)
+        if match:
+            return match.group(1)
+        
+        # If we can't extract it, return the original
+        return url_or_id
+    
+    def get_video_info(self, video_id: str) -> PlaylistInfo:
+        """
+        Get information for a single video (not in a playlist).
+        
+        Args:
+            video_id: The YouTube video ID
+            
+        Returns:
+            PlaylistInfo object with single video information
+        """
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
+        
+        ydl_opts = {
+            'remote_components': 'ejs:github',
+            'quiet': True,
+            'skip_download': True,
+            'extractor_args': {
+                'youtubetab': {
+                    'skip': ['authcheck']
+                },
+                'youtube': {
+                    'player_client': ['ios', 'web'],
+                }
+            }
+        }
+        
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+        
+        # Get the video title
+        raw_title = info.get('title', f'Video_{video_id}')
+        sanitized_title = self.filename_sanitizer._sanitize_filename_component(raw_title)
+        
+        # Create a PlaylistInfo object with single entry
+        return PlaylistInfo(
+            id=video_id,
+            title=sanitized_title,
+            url=video_url,
+            total_tracks=1,
+            entries=[info]  # Single entry
+        )
+    
     def download(self, playlist_id: str, config: DownloadConfig,
                 progress_callback: Optional[ProgressListener] = None) -> None:
         """Download a playlist"""
@@ -100,31 +204,59 @@ class YouTubePlaylistDownloader:
                 return  # Exit early without raising exception
 
             try:
-                # Check for duplicates if enabled and not in quick mode
-                if config.check_duplicates and not quick_mode:
-                    # Use is_duplicate method if available
-                    if hasattr(self.history_repository, 'is_duplicate'):
-                        is_duplicate = self.history_repository.is_duplicate(playlist_id)
+                # Detect if this is a single video or playlist
+                is_single = self.is_single_video_url(playlist_id)
+                
+                if is_single:
+                    # Extract the video ID if it's a full URL
+                    video_id = self.extract_video_id(playlist_id)
+                    self.logger.info(f"Detected single video: {video_id}")
+                    
+                    # Get video info
+                    skip_metadata = getattr(config, 'skip_metadata', False) or quick_mode
+                    if skip_metadata:
+                        # Minimal info for quick mode
+                        playlist_info = PlaylistInfo(
+                            id=video_id,
+                            title=f"Video_{video_id}",
+                            url=f"https://www.youtube.com/watch?v={video_id}",
+                            total_tracks=1,
+                            entries=[]
+                        )
                     else:
-                        # Fall back to old method
-                        existing = self.history_repository.find_by_playlist_id(playlist_id)
-                        is_duplicate = existing is not None
-                        
-                    if is_duplicate:
-                        self.logger.info(f"Skipping duplicate: {playlist_id}")
-                        if progress_callback:
-                            progress_callback.on_download_complete(playlist_id)
-                        return
-                
-                # Get playlist info - use minimal mode if configured or in quick mode
-                skip_metadata = getattr(config, 'skip_metadata', False) or quick_mode
-                playlist_info = self.get_playlist_info(playlist_id, minimal=skip_metadata)
-                
-                # Create download directory
-                playlist_folder = self._create_playlist_folder(
-                    config.download_directory, 
-                    playlist_info.title
-                )
+                        playlist_info = self.get_video_info(video_id)
+                    
+                    # Use the Singles folder instead of a folder based on title
+                    playlist_folder = self._create_playlist_folder(
+                        config.download_directory,
+                        getattr(config, 'singles_folder_name', 'Singles')  # Use "Singles" folder
+                    )
+                else:
+                    # Check for duplicates if enabled and not in quick mode
+                    if config.check_duplicates and not quick_mode:
+                        # Use is_duplicate method if available
+                        if hasattr(self.history_repository, 'is_duplicate'):
+                            is_duplicate = self.history_repository.is_duplicate(playlist_id)
+                        else:
+                            # Fall back to old method
+                            existing = self.history_repository.find_by_playlist_id(playlist_id)
+                            is_duplicate = existing is not None
+                            
+                        if is_duplicate:
+                            self.logger.info(f"Skipping duplicate: {playlist_id}")
+                            if progress_callback:
+                                progress_callback.on_download_complete(playlist_id)
+                            return
+                    
+                    # Original playlist logic
+                    skip_metadata = getattr(config, 'skip_metadata', False) or quick_mode
+                    playlist_info = self.get_playlist_info(playlist_id, minimal=skip_metadata)
+                    
+                    # Create download directory based on playlist title
+                    playlist_folder = self._create_playlist_folder(
+                        config.download_directory, 
+                        playlist_info.title
+                    )
                 
                 # Create marker file (only in normal mode)
                 if not quick_mode:
@@ -216,8 +348,18 @@ class YouTubePlaylistDownloader:
         self.current_download = playlist_id
         
         try:
-            # Skip duplicate checking, but we'll still fetch info for the title and metadata
-            playlist_url = f"https://www.youtube.com/playlist?list={playlist_id}"
+            # Detect if this is a single video or playlist
+            is_single = self.is_single_video_url(playlist_id)
+            
+            if is_single:
+                # Extract the video ID if it's a full URL
+                video_id = self.extract_video_id(playlist_id)
+                playlist_url = f"https://www.youtube.com/watch?v={video_id}"
+                self.logger.info(f"Quick download for single video: {video_id}")
+            else:
+                # It's a playlist
+                playlist_url = f"https://www.youtube.com/playlist?list={playlist_id}"
+                self.logger.info(f"Quick download for playlist: {playlist_id}")
             
             # Notify listener about download start
             if progress_callback:
@@ -232,15 +374,42 @@ class YouTubePlaylistDownloader:
                     message=f"Starting quick download for {playlist_id} (getting info)"
                 ))
             
-            # Get minimal playlist info - enough to get the title and basic metadata
-            ydl_opts = {
-                'quiet': True,
-                'extract_flat': 'in_playlist',  # We need entry info for metadata
-                'skip_download': True,
-                'playlist_items': '0:10',  # Get info for first 10 videos at most for speed
-            }
+            # Get minimal info - different options for videos vs playlists
+            if is_single:
+                # For single videos, get full info
+                ydl_opts = {
+                    'remote_components': 'ejs:github',
+                    'quiet': True,
+                    'skip_download': True,
+                    'noplaylist': True,  # Important: don't extract playlist if video is part of one
+                    'extractor_args': {
+                        'youtubetab': {
+                            'skip': ['authcheck']
+                        },
+                        'youtube': {
+                            'player_client': ['ios', 'web'],
+                        }
+                    }
+                }
+            else:
+                # For playlists, get minimal info
+                ydl_opts = {
+                    'remote_components': 'ejs:github',
+                    'quiet': True,
+                    'extract_flat': 'in_playlist',  # We need entry info for metadata
+                    'skip_download': True,
+                    'playlist_items': '0:10',  # Get info for first 10 videos at most for speed
+                    'extractor_args': {
+                        'youtubetab': {
+                            'skip': ['authcheck']
+                        },
+                        'youtube': {
+                            'player_client': ['ios', 'web'],
+                        }
+                    }
+                }
             
-            playlist_title = f"Playlist_{playlist_id}"  # Default fallback title
+            playlist_title = f"{'Video' if is_single else 'Playlist'}_{playlist_id}"  # Default fallback title
             playlist_entries = []  # Default empty entries list
             
             try:
@@ -252,17 +421,31 @@ class YouTubePlaylistDownloader:
                             raw_title = info.get('title')
                             # Sanitize the title
                             playlist_title = self.filename_sanitizer._sanitize_filename_component(raw_title)
-                            self.logger.debug(f"Got playlist title: {playlist_title}")
+                            self.logger.debug(f"Got title: {playlist_title}")
                         
                         # Get entries for metadata
-                        if 'entries' in info:
-                            playlist_entries = info.get('entries', [])
+                        if is_single:
+                            # For single videos, create a single entry
+                            playlist_entries = [info]
+                        else:
+                            # For playlists, get the entries
+                            if 'entries' in info:
+                                playlist_entries = info.get('entries', [])
             except Exception as e:
                 # If title extraction fails, just use the ID
-                self.logger.warning(f"Couldn't get playlist info, using ID: {e}")
+                self.logger.warning(f"Couldn't get {'video' if is_single else 'playlist'} info, using ID: {e}")
             
-            # Create download directory with the title we got
-            download_folder = os.path.join(config.download_directory, playlist_title)
+            # Create download directory
+            if is_single:
+                # Use Singles folder for single videos
+                download_folder = os.path.join(
+                    config.download_directory,
+                    getattr(config, 'singles_folder_name', 'Singles')
+                )
+            else:
+                # Use playlist title for playlists
+                download_folder = os.path.join(config.download_directory, playlist_title)
+            
             os.makedirs(download_folder, exist_ok=True)
             
             # Create a playlist info object with what we have
@@ -277,6 +460,7 @@ class YouTubePlaylistDownloader:
             # Generate metadata files
             self._generate_playlist_metadata_file(playlist_info, download_folder, config)
             
+            print("Quick")
             # Download directly with optimized options
             self._download_playlist_quick(playlist_info, download_folder, config, progress_callback)
             
@@ -350,9 +534,18 @@ class YouTubePlaylistDownloader:
         
         # Original implementation for standard downloads
         ydl_opts = {
+            'remote_components': 'ejs:github',
             'quiet': True,
             'extract_flat': 'in_playlist',
             'skip_download': True,
+            'extractor_args': {
+                'youtubetab': {
+                    'skip': ['authcheck']
+                },
+                'youtube': {
+                    'player_client': ['ios', 'web'],
+                }
+            }
         }
         
         with YoutubeDL(ydl_opts) as ydl:
@@ -429,9 +622,18 @@ class YouTubePlaylistDownloader:
                 try:
                     # Try to get more detailed info but don't fail the whole download if it doesn't work
                     ydl_opts = {
+                        'remote_components': 'ejs:github',
                         'quiet': True,
                         'extract_flat': 'in_playlist',
                         'skip_download': True,
+                        'extractor_args': {
+                            'youtubetab': {
+                                'skip': ['authcheck']
+                            },
+                            'youtube': {
+                                'player_client': ['ios', 'web'],
+                            }
+                        }
                     }
                     with YoutubeDL(ydl_opts) as ydl:
                         info = ydl.extract_info(detailed_info.url, download=False)
@@ -558,7 +760,16 @@ class YouTubePlaylistDownloader:
         # Generate metadata file before starting download
         self._generate_playlist_metadata_file(playlist_info, folder, config)
         
-        output_template = os.path.join(folder, config.output_template)
+        # Determine if this is a single video and choose appropriate template
+        is_single = playlist_info.total_tracks == 1
+        if is_single:
+            template = getattr(config, 'single_video_template', '%(title)s.%(ext)s')
+            self.logger.info(f"Using single video template: {template}")
+        else:
+            template = config.output_template
+            self.logger.info(f"Using playlist template: {template}")
+        
+        output_template = os.path.join(folder, template)
 
         # Verify template contains the folder path
         if folder not in output_template:
@@ -566,7 +777,10 @@ class YouTubePlaylistDownloader:
             self.logger.error(f"Folder: {folder}")
             self.logger.error(f"Template: {output_template}")
             # Fix template directly
-            output_template = os.path.normpath(folder + '/' + '%(playlist_index)02d-%(title)s.%(ext)s')
+            if is_single:
+                output_template = os.path.normpath(folder + '/' + '%(title)s.%(ext)s')
+            else:
+                output_template = os.path.normpath(folder + '/' + '%(playlist_index)02d-%(title)s.%(ext)s')
             self.logger.info(f"Attempting to fix template: {output_template}")
 
         # Log what we're doing
@@ -585,9 +799,8 @@ class YouTubePlaylistDownloader:
                 outer_logger.error(f"yt-dlp error: {msg}")  # Use captured logger
         
         ydl_opts = {
-            'format': self.quality_formatter.get_format_string(
-                config.default_quality.value
-            ),
+            'remote_components': 'ejs:github',
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
             'logger': QuietLogger(),  # Use custom logger to suppress output
             'noprogress': False,  # Keep progress hooks enabled
             'noplaylist': False,
@@ -596,9 +809,18 @@ class YouTubePlaylistDownloader:
             'merge_output_format': config.preferred_format,
             'sleep_interval': 1,  # Sleep between requests to avoid rate limiting
             'max_sleep_interval': 5,
-            'sleep_interval_requests': 3,
             'ignoreerrors': config.auto_retry_failed,  # Skip errors if auto retry is enabled
-            'geo_bypass': True  # Try to bypass geo-restrictions
+            'geo_bypass': True,  # Try to bypass geo-restrictions
+            # Enable remote component downloading for signature solving
+            'extractor_args': {
+                'youtubetab': {
+                    'skip': ['authcheck']
+                },
+                'youtube': {
+                    # Use clients that work better with current YouTube
+                    'player_client': ['ios', 'web'],
+                }
+            }
         }
         
         # Add postprocessing if enabled
@@ -685,7 +907,10 @@ class YouTubePlaylistDownloader:
                     # First try to extract info only to verify URL works
                     try:
                         self.logger.info(f"Extracting playlist info for {playlist_info.url}")
-                        ydl.extract_info(playlist_info.url, download=False)
+                        # Only pre-extract for non-YouTube URLs
+                        if 'youtube.com' not in playlist_info.url and 'youtu.be' not in playlist_info.url:
+                            ydl.extract_info(playlist_info.url, download=False)
+
                     except Exception as info_error:
                         self.logger.error(f"Info extraction error: {info_error}")
                         # Continue anyway - sometimes the info extraction fails but download works
@@ -710,7 +935,16 @@ class YouTubePlaylistDownloader:
         # Ensure folder exists
         os.makedirs(folder, exist_ok=True)
         
-        output_template = os.path.join(folder, config.output_template)
+        # Determine if this is a single video and choose appropriate template
+        is_single = playlist_info.total_tracks == 1
+        if is_single:
+            template = getattr(config, 'single_video_template', '%(title)s.%(ext)s')
+            self.logger.info(f"Using single video template (quick): {template}")
+        else:
+            template = config.output_template
+            self.logger.info(f"Using playlist template (quick): {template}")
+        
+        output_template = os.path.join(folder, template)
         
         # Prepare download options with minimal settings
         # Create a custom logger class that redirects yt-dlp output
@@ -725,18 +959,25 @@ class YouTubePlaylistDownloader:
                 outer_logger.error(f"yt-dlp error: {msg}")  # Use captured logger
         
         ydl_opts = {
-            'format': self.quality_formatter.get_format_string(
-                config.default_quality.value
-            ),
-            'logger': QuietLogger(),  # Use custom logger to suppress output
-            'noprogress': False,  # Keep progress hooks enabled
+            'remote_components': 'ejs:github',
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
+            'logger': None,  # Don't use QuietLogger
+            'noprogress': False,
             'noplaylist': False,
             'outtmpl': output_template,
-            'ignoreerrors': True,  # Skip errors for quicker processing
+            'ignoreerrors': True,
             'merge_output_format': config.preferred_format,
-            'nocheckcertificate': True,  # Skip certificate validation
-            'geo_bypass': True,  # Try to bypass geo-restrictions
-            'sleep_interval': 0  # No sleep between requests
+            'nocheckcertificate': True,
+            'geo_bypass': True,
+            'sleep_interval': 1,  # Small delay to avoid rate limiting
+            'max_sleep_interval': 5,
+            # Enable remote component downloading for signature solving
+            'extractor_args': {
+                'youtube': {
+                    # Use clients that work better with current YouTube
+                    'player_client': ['ios', 'web'],
+                }
+            },
         }
 
         # Add progress hook with throttling
@@ -784,13 +1025,22 @@ class YouTubePlaylistDownloader:
                     
             ydl_opts['progress_hooks'] = [progress_hook]
         
-        # Add cookies if configured, with minimal validation
-        if config.cookie_method != 'none' and config.cookie_method == 'file':
+        # Add cookies if configured - ESSENTIAL for avoiding bot detection
+        if config.cookie_method == 'file':
             if config.cookie_file and os.path.exists(config.cookie_file):
                 ydl_opts['cookiefile'] = config.cookie_file
+                self.logger.info(f"Using cookie file: {config.cookie_file}")
         elif config.cookie_method != 'none':
             # For browser cookies
-            ydl_opts['cookiesfrombrowser'] = (config.cookie_method, None, None, None)
+            ydl_opts['cookiesfrombrowser'] = (config.cookie_method, None, None, None, None)
+            self.logger.info(f"Using cookies from browser: {config.cookie_method}")
+        
+        self.logger.info(f"Using format string: {ydl_opts['format']}")
+        self.logger.debug(f"Full ydl_opts: {ydl_opts}")
+
+        # Ensure deno is in PATH for JavaScript signature solving
+        deno_path = os.path.expanduser("~/.deno/bin")
+        os.environ["PATH"] = deno_path + os.pathsep + os.environ.get("PATH", "")
         
         # Download
         with YoutubeDL(ydl_opts) as ydl:
@@ -901,14 +1151,13 @@ class YouTubePlaylistDownloader:
                 self.logger.warning(f"Cookie file not found or not set: {config.cookie_file}")
         elif config.cookie_method != 'none':
             # For browser cookies
-            ydl_opts['cookiesfrombrowser'] = (config.cookie_method, None, None, None)
+            ydl_opts['cookiesfrombrowser'] = (config.cookie_method, None, None, None, None)
             self.logger.info(f"Using cookies from browser: {config.cookie_method}")
             
         # Add additional yt-dlp options that help with bot detection
         ydl_opts.update({
             'sleep_interval': 1,  # Sleep between requests to avoid rate limiting
             'max_sleep_interval': 5,
-            'sleep_interval_requests': 3,  # Number of requests between sleeps
             'ignoreerrors': False,  # Don't ignore errors
             'geo_bypass': True,  # Try to bypass geo-restrictions
         })

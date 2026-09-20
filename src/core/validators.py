@@ -280,8 +280,8 @@ class FileNameSanitizer:
             
     def _sanitize_filename_component(self, component: str) -> str:
         """Sanitize a single filename component (not a path)"""
-        # Remove invalid characters, but NOT path separators
-        invalid_chars = r'\\*?:"<>|'  # Note: removed / from the invalid chars list
+        # Remove invalid characters including forward slash (to prevent subdirectories)
+        invalid_chars = r'\/*?:"<>|'  # Added / to prevent subdirectory creation
         sanitized = re.sub(f'[{re.escape(invalid_chars)}]', "_", component)
         
         # Remove leading/trailing whitespace and dots
@@ -290,11 +290,26 @@ class FileNameSanitizer:
         # Replace multiple spaces with single space
         sanitized = re.sub(r'\s+', ' ', sanitized)
         
-        # Limit length
-        if len(sanitized) > 200:
-            name, ext = os.path.splitext(sanitized)
-            max_name_length = 200 - len(ext)
-            sanitized = name[:max_name_length] + ext
+        # Limit length - use 100 chars for directories/filenames
+        max_length = 100
+        if len(sanitized) > max_length:
+            # Try to find a word boundary (space, dash, underscore) near the limit
+            # Look backwards from max_length to find a good break point
+            break_chars = [' ', '-', '_', '·', '–', '—']
+            best_break = None
+            
+            # Search backwards from max_length, looking for a word boundary
+            for i in range(max_length, max(max_length - 30, 0), -1):
+                if i < len(sanitized) and sanitized[i] in break_chars:
+                    best_break = i
+                    break
+            
+            if best_break:
+                # Break at word boundary and clean up trailing punctuation
+                sanitized = sanitized[:best_break].rstrip(' -_·–—')
+            else:
+                # No word boundary found, just truncate at max_length
+                sanitized = sanitized[:max_length].rstrip()
             
         # Ensure filename is not empty
         if not sanitized:
@@ -310,12 +325,12 @@ class QualityFormatter:
         # Get class-specific logger
         self.logger = get_logger(f"{__name__}.QualityFormatter")
         
+        # SIMPLIFIED format strings that work with Android client
         self.format_strings = {
-            # More flexible format strings that don't require specific codecs
-            'best': 'bestvideo+bestaudio/best',
-            '1080p': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
-            '720p': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
-            '480p': 'bestvideo[height<=480]+bestaudio/best[height<=480]/best',
+            'best': 'best',  # Just get the best available
+            '1080p': 'best[height<=1080]',
+            '720p': 'best[height<=720]',
+            '480p': 'best[height<=480]',
             'audio_only': 'bestaudio/best'
         }
         
@@ -335,17 +350,17 @@ class QualityFormatter:
             return self._custom_format_cache[quality]
             
         # Generate custom format string
-        # Basic pattern: match resolution and get best audio
         custom_format = None
         
         # Try to interpret quality as a resolution
         resolution_match = re.match(r'(\d+)p', quality)
         if resolution_match:
             height = resolution_match.group(1)
-            custom_format = f'bestvideo[height<={height}]+bestaudio/best[height<={height}]/best'
+            custom_format = f'best[height<={height}]'
             self._custom_format_cache[quality] = custom_format
             return custom_format
             
         # Fallback to best if no match
         self.logger.warning(f"Unknown quality '{quality}', using 'best' instead")
-        return self.format_strings['best']
+        return 'best'
+        
